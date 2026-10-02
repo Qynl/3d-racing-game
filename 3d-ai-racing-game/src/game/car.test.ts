@@ -1,0 +1,533 @@
+import * as THREE from "three";
+import { beforeEach, describe, expect, it } from "vitest";
+import {
+  CarPhysics,
+  NEUTRAL_INPUT,
+  REVERSE_MAX,
+  TYRE_PEAK_TEMP,
+  tuningFromClass,
+  tyreTempGrip,
+} from "./car";
+import type { CarInput } from "./car";
+import { carClassById, trackById } from "./config";
+import type { Terrain } from "./terrain";
+import { Track } from "./track";
+
+/** Flat ground: enough for physics assertions without generating a heightmap. */
+function flatTerrain(height: (x: number, z: number) => number = () => 0): Terrain {
+  return {
+    getHeight: (x: number, z: number) => height(x, z),
+    getNormal: (_x: number, _z: number, out: THREE.Vector3) => out.set(0, 1, 0),
+  } as unknown as Terrain;
+}
+
+/**
+ * A straight, infinitely long stand-in for a circuit. Real tracks curve away
+ * under a car driving in a straight line, which makes "on surface" flip
+ * mid-test; here the lateral distance is whatever we say it is.
+ */
+function straightTrack(lateral = 0, halfWidth = 7.2): Track {
+  return {
+    halfWidth,
+    count: 1600,
+    nearestInWindow: () => 0,
+    distanceToTrack: () => lateral,
+    nearest: () => ({ index: 0, dist: lateral }),
+    points: [new THREE.Vector3()],
+    rights: [new THREE.Vector3(1, 0, 0)],
+    tangents: [new THREE.Vector3(0, 0, 1)],
+  } as unknown as Track;
+}
+
+const realTrack = new Track(trackById("sundown"));
+const input = (patch: Partial<CarInput> = {}): CarInput => ({ ...NEUTRAL_INPUT, ...patch });
+
+function freshCar(classId = "coyote", track: Track = straightTrack()) {
+  const car = new CarPhysics(tuningFromClass(carClassById(classId)));
+  car.place(0, 0, 0, flatTerrain(), track);
+  car.resetRaceState();
+  return car;
+}
+
+function drive(
+  car: CarPhysics,
+  inp: CarInput,
+  seconds: number,
+  track: Track = straightTrack(),
+  terrain = flatTerrain(),
+) {
+  const dt = 1 / 120;
+  for (let i = 0; i < Math.round(seconds / dt); i++) car.step(inp, dt, terrain, track);
+}
+
+describe("CarPhysics placement", () => {
+  it("snaps to the ground, stopped and on the surface", () => {
+    const car = freshCar();
+    expect(car.pos.y).toBeCloseTo(0, 6);
+    expect(car.speed).toBe(0);
+    expect(car.grounded).toBe(true);
+    expect(car.trackDist).toBeLessThan(1);
+  });
+
+  it("locates itself on a real circuit", () => {
+    const car = new CarPhysics(tuningFromClass(carClassById("coyote")));
+    const p = realTrack.points[250];
+    car.place(p.x, p.z, realTrack.yawAt(250), flatTerrain(), realTrack);
+    expect(car.trackIndex).toBe(250);
+    expect(car.trackDist).toBeLessThan(0.5);
+    expect(car.onTrack).toBe(true);
+  });
+});
+
+describe("CarPhysics longitudinal", () => {
+  let car: CarPhysics;
+  beforeEach(() => {
+    car = freshCar();
+  });
+
+  it("accelerates under throttle and settles near the class top speed", () => {
+    drive(car, input({ throttle: 1 }), 3);
+    const after3s = car.speedF;
+    expect(after3s).toBeGreaterThan(10);
+    drive(car, input({ throttle: 1 }), 25);
+    expect(car.speedF).toBeGreaterThan(after3s);
+    expect(car.speedF).toBeGreaterThan(car.tuning.topSpeed * 0.85);
+    expect(car.speedF).toBeLessThanOrEqual(car.tuning.topSpeed * 1.11);
+  });
+
+  it("brakes harder than it coasts", () => {
+    drive(car, input({ throttle: 1 }), 6);
+    const v0 = car.speedF;
+    const coasting = freshCar();
+    coasting.yaw = car.yaw;
+    coasting.speedF = v0;
+    coasting.vel.copy(coasting.forward(new THREE.Vector3()).multiplyScalar(v0));
+    drive(coasting, input(), 1);
+    drive(car, input({ brake: 1 }), 1);
+    expect(car.speedF).toBeLessThan(coasting.speedF);
+    expect(car.speedF).toBeLessThan(v0);
+  });
+
+  it("reverses, but slowly and with a cap", () => {
+    drive(car, input({ brake: 1 }), 8);
+    expect(car.speedF).toBeLessThan(-1);
+    expect(car.speedF).toBeGreaterThanOrEqual(-REVERSE_MAX - 0.001);
+  });
+
+  it("settles to a dead stop when coasting", () => {
+    drive(car, input({ throttle: 1 }), 2);
+    drive(car, input({ brake: 1 }), 1.2);
+    drive(car, input(), 10);
+    expect(Math.abs(car.speedF)).toBeLessThan(0.1);
+  });
+
+  it("is slower off the racing surface", () => {
+    const onSurface = freshCar();
+    drive(onSurface, input({ throttle: 1 }), 12);
+    const offSurface = freshCar("coyote", straightTrack(40));
+    drive(offSurface, input({ throttle: 1 }), 12, straightTrack(40));
+    expect(onSurface.onTrack).toBe(true);
+    expect(offSurface.onTrack).toBe(false);
+    expect(offSurface.speedF).toBeLessThan(onSurface.speedF * 0.8);
+  });
+});
+
+describe("car classes", () => {
+  const terminal = (id: string, seconds: number) => {
+    const c = freshCar(id);
+    drive(c, input({ throttle: 1 }), seconds);
+    return c.speedF;
+  };
+
+  it("make the Vulture faster flat out than the Jackrabbit", () => {
+    expect(terminal("vulture", 40)).toBeGreaterThan(terminal("jackrabbit", 40));
+  });
+
+  it("make the Jackrabbit quicker off the line", () => {
+    expect(terminal("jackrabbit", 2)).toBeGreaterThan(terminal("vulture", 2));
+  });
+
+  it("give every class a distinct terminal speed", () => {
+    const speeds = ["coyote", "jackrabbit", "vulture"].map((id) => terminal(id, 40));
+    expect(new Set(speeds.map((s) => Math.round(s))).size).toBe(3);
+  });
+});
+
+describe("drift, boost and airtime", () => {
+  /** Keeps feeding lateral velocity so the slide survives the grip model. */
+  function slide(car: CarPhysics, seconds: number, track = straightTrack()) {
+    const dt = 1 / 120;
+    const rgt = new THREE.Vector3();
+    for (let i = 0; i < Math.round(seconds / dt); i++) {
+      car.right(rgt);
+      car.vel.addScaledVector(rgt, 12 - car.speedR);
+      car.step(input({ throttle: 1, steer: 1, handbrake: true }), dt, flatTerrain(), track);
+    }
+  }
+
+  it("earns drift score and banks boost when sliding", () => {
+    const car = freshCar();
+    drive(car, input({ throttle: 1 }), 5);
+    slide(car, 2);
+    expect(car.driftScore).toBeGreaterThan(0);
+    expect(car.driftMultiplier).toBeGreaterThan(1);
+    expect(car.boost).toBeGreaterThan(0);
+    expect(car.boost).toBeLessThanOrEqual(1);
+  });
+
+  it("builds a bigger multiplier the longer the chain holds", () => {
+    const short = freshCar();
+    drive(short, input({ throttle: 1 }), 5);
+    slide(short, 1);
+    const long = freshCar();
+    drive(long, input({ throttle: 1 }), 5);
+    slide(long, 3);
+    expect(long.driftMultiplier).toBeGreaterThan(short.driftMultiplier);
+    expect(long.driftScore).toBeGreaterThan(short.driftScore * 2);
+    expect(long.driftMultiplier).toBeLessThanOrEqual(5);
+  });
+
+  it("drops the chain shortly after the slide ends", () => {
+    const car = freshCar();
+    drive(car, input({ throttle: 1 }), 5);
+    slide(car, 2);
+    expect(car.driftMultiplier).toBeGreaterThan(1);
+    drive(car, input({ throttle: 1 }), 1.5);
+    expect(car.driftMultiplier).toBe(1);
+  });
+
+  it("drains the tank while boosting and never goes negative", () => {
+    const car = freshCar();
+    drive(car, input({ throttle: 1 }), 4);
+    car.boost = 0.5;
+    drive(car, input({ throttle: 1, boost: true }), 0.5);
+    expect(car.boosting).toBe(true);
+    expect(car.boost).toBeLessThan(0.5);
+    drive(car, input({ throttle: 1, boost: true }), 10);
+    expect(car.boost).toBe(0);
+    expect(car.boosting).toBe(false);
+  });
+
+  it("goes faster with boost than without", () => {
+    const plain = freshCar();
+    drive(plain, input({ throttle: 1 }), 4);
+    const boosted = freshCar();
+    boosted.boost = 1;
+    drive(boosted, input({ throttle: 1, boost: true }), 4);
+    expect(boosted.speedF).toBeGreaterThan(plain.speedF);
+  });
+
+  it("never banks more than a full tank", () => {
+    const car = freshCar();
+    drive(car, input({ throttle: 1 }), 5);
+    for (let i = 0; i < 6; i++) slide(car, 3);
+    expect(car.boost).toBeLessThanOrEqual(1);
+    expect(car.driftCharge).toBeLessThan(1);
+  });
+
+  it("launches off a crest, counts airtime and lands again", () => {
+    const car = freshCar();
+    drive(car, input({ throttle: 1 }), 6);
+    const start = car.pos.clone();
+    // a ramp that rises then falls away sharply ahead of the car
+    const ramp = flatTerrain((x, z) => {
+      const d = Math.hypot(x - start.x, z - start.z);
+      if (d < 12) return d * 0.5;
+      return Math.max(0, 6 - (d - 12) * 2);
+    });
+    drive(car, input({ throttle: 1 }), 2.5, straightTrack(), ramp);
+    expect(car.totalAirTime).toBeGreaterThan(0);
+    expect(car.boost + car.driftCharge).toBeGreaterThan(0);
+    expect(car.grounded).toBe(true);
+  });
+
+  it("tracks the top speed seen during a race and clears it on reset", () => {
+    const car = freshCar();
+    drive(car, input({ throttle: 1 }), 8);
+    expect(car.topSpeedSeen).toBeGreaterThan(10);
+    car.resetRaceState();
+    expect(car.topSpeedSeen).toBe(0);
+    expect(car.driftScore).toBe(0);
+    expect(car.boost).toBe(0);
+  });
+});
+
+describe("steering", () => {
+  it("does not turn when stationary but does at speed", () => {
+    const parked = freshCar();
+    const yaw0 = parked.yaw;
+    drive(parked, input({ steer: 1 }), 1);
+    expect(parked.yaw).toBeCloseTo(yaw0, 4);
+
+    const moving = freshCar();
+    drive(moving, input({ throttle: 1 }), 4);
+    const yaw1 = moving.yaw;
+    drive(moving, input({ throttle: 1, steer: 1 }), 1);
+    expect(Math.abs(moving.yaw - yaw1)).toBeGreaterThan(0.2);
+  });
+
+  it("steers symmetrically left and right", () => {
+    const left = freshCar();
+    drive(left, input({ throttle: 1 }), 4);
+    const l0 = left.yaw;
+    drive(left, input({ throttle: 1, steer: -1 }), 0.5);
+    const right = freshCar();
+    drive(right, input({ throttle: 1 }), 4);
+    const r0 = right.yaw;
+    drive(right, input({ throttle: 1, steer: 1 }), 0.5);
+    expect(left.yaw - l0).toBeCloseTo(-(right.yaw - r0), 3);
+  });
+
+  it("has weaker steering authority in the air", () => {
+    const ground = freshCar();
+    drive(ground, input({ throttle: 1 }), 4);
+    const g0 = ground.yaw;
+    drive(ground, input({ throttle: 1, steer: 1 }), 0.5);
+    const groundDelta = Math.abs(ground.yaw - g0);
+
+    const air = freshCar();
+    drive(air, input({ throttle: 1 }), 4);
+    air.grounded = false;
+    air.velY = 8;
+    const a0 = air.yaw;
+    drive(
+      air,
+      input({ throttle: 1, steer: 1 }),
+      0.5,
+      straightTrack(),
+      flatTerrain(() => -50),
+    );
+    const airDelta = Math.abs(air.yaw - a0);
+
+    expect(airDelta).toBeLessThan(groundDelta);
+  });
+});
+
+describe("launch control, slipstream and damage", () => {
+  it("launch assist gets the car moving quicker off the line", () => {
+    const plain = freshCar();
+    drive(plain, input({ throttle: 1 }), 1.2);
+    const launched = freshCar();
+    launched.applyLaunch(1);
+    drive(launched, input({ throttle: 1 }), 1.2);
+    expect(launched.speedF).toBeGreaterThan(plain.speedF * 1.08);
+  });
+
+  it("bogging down costs you the start", () => {
+    const plain = freshCar();
+    drive(plain, input({ throttle: 1 }), 0.8);
+    const bogged = freshCar();
+    bogged.applyBog(1.2);
+    drive(bogged, input({ throttle: 1 }), 0.8);
+    expect(bogged.speedF).toBeLessThan(plain.speedF * 0.75);
+    expect(bogged.bog).toBeGreaterThan(0);
+  });
+
+  it("a full slipstream raises terminal speed", () => {
+    const alone = freshCar();
+    drive(alone, input({ throttle: 1 }), 24);
+    const drafting = freshCar();
+    drafting.draft = 1;
+    for (let i = 0; i < 24 * 120; i++) {
+      drafting.draft = 1;
+      drafting.step(input({ throttle: 1 }), 1 / 120, flatTerrain(), straightTrack());
+    }
+    expect(drafting.speedF).toBeGreaterThan(alone.speedF + 1);
+  });
+
+  it("damage caps top speed and then repairs itself", () => {
+    const car = freshCar();
+    car.addDamage(0.6);
+    expect(car.damage).toBeCloseTo(0.6, 5);
+    drive(car, input({ throttle: 1 }), 20);
+    const hurt = car.speedF;
+    const healthy = freshCar();
+    drive(healthy, input({ throttle: 1 }), 20);
+    expect(hurt).toBeLessThan(healthy.speedF);
+    expect(car.damage).toBeLessThan(0.6);
+  });
+
+  it("clamps damage to 0..1 and clears it on a race reset", () => {
+    const car = freshCar();
+    car.addDamage(5);
+    expect(car.damage).toBe(1);
+    car.applyLaunch(2);
+    car.resetRaceState();
+    expect(car.damage).toBe(0);
+    expect(car.launchAssist).toBe(0);
+    expect(car.draft).toBe(0);
+    expect(car.surface).toBe("track");
+  });
+
+  it("flags the rumble strip near the edge of the surface", () => {
+    const car = freshCar("coyote", straightTrack(6.9));
+    drive(car, input({ throttle: 1 }), 1, straightTrack(6.9));
+    expect(car.surface).toBe("rumble");
+    expect(car.rumble).toBeGreaterThan(0);
+
+    const middle = freshCar("coyote", straightTrack(0));
+    drive(middle, input({ throttle: 1 }), 1, straightTrack(0));
+    expect(middle.surface).toBe("track");
+
+    const off = freshCar("coyote", straightTrack(20));
+    drive(off, input({ throttle: 1 }), 1, straightTrack(20));
+    expect(off.surface).toBe("sand");
+  });
+
+  it("the rumble strip costs grip compared with clean track", () => {
+    const clean = freshCar("coyote", straightTrack(0));
+    drive(clean, input({ throttle: 1 }), 6, straightTrack(0));
+    drive(clean, input({ throttle: 1, steer: 1 }), 1.2, straightTrack(0));
+    const strip = freshCar("coyote", straightTrack(6.9));
+    drive(strip, input({ throttle: 1 }), 6, straightTrack(6.9));
+    drive(strip, input({ throttle: 1, steer: 1 }), 1.2, straightTrack(6.9));
+    expect(Math.abs(strip.speedR)).toBeGreaterThan(Math.abs(clean.speedR));
+  });
+});
+
+describe("weather grip and garage upgrades", () => {
+  it("wet conditions cost lateral grip", () => {
+    const dry = freshCar();
+    drive(dry, input({ throttle: 1 }), 6);
+    drive(dry, input({ throttle: 1, steer: 1 }), 1.5);
+    const wet = freshCar();
+    wet.conditionGrip = 0.78;
+    for (let i = 0; i < 6 * 120; i++) {
+      wet.conditionGrip = 0.78;
+      wet.step(input({ throttle: 1 }), 1 / 120, flatTerrain(), straightTrack());
+    }
+    for (let i = 0; i < 1.5 * 120; i++) {
+      wet.conditionGrip = 0.78;
+      wet.step(input({ throttle: 1, steer: 1 }), 1 / 120, flatTerrain(), straightTrack());
+    }
+    expect(Math.abs(wet.speedR)).toBeGreaterThan(Math.abs(dry.speedR));
+  });
+
+  it("a fully upgraded car is quicker than a stock one", () => {
+    const stock = new CarPhysics(tuningFromClass(carClassById("coyote")));
+    const tuned = new CarPhysics(
+      tuningFromClass(carClassById("coyote"), { engine: 3, tyres: 3, brakes: 3, nitrous: 3 }),
+    );
+    expect(tuned.tuning.topSpeed).toBeGreaterThan(stock.tuning.topSpeed);
+    expect(tuned.tuning.engine).toBeGreaterThan(stock.tuning.engine);
+    expect(tuned.tuning.grip).toBeGreaterThan(stock.tuning.grip);
+    expect(tuned.tuning.boostTank).toBeGreaterThan(stock.tuning.boostTank);
+    // ...but still recognisably the same class, not a different car
+    expect(tuned.tuning.topSpeed).toBeLessThan(stock.tuning.topSpeed * 1.25);
+  });
+
+  it("upgrades actually show up in a standing start", () => {
+    const stock = new CarPhysics(tuningFromClass(carClassById("coyote")));
+    stock.place(0, 0, 0, flatTerrain(), straightTrack());
+    stock.resetRaceState();
+    drive(stock, input({ throttle: 1 }), 4);
+    const tuned = new CarPhysics(
+      tuningFromClass(carClassById("coyote"), { engine: 3, tyres: 0, brakes: 0, nitrous: 0 }),
+    );
+    tuned.place(0, 0, 0, flatTerrain(), straightTrack());
+    tuned.resetRaceState();
+    drive(tuned, input({ throttle: 1 }), 4);
+    expect(tuned.speedF).toBeGreaterThan(stock.speedF);
+  });
+});
+
+describe("tyres", () => {
+  it("peaks inside the working window and falls off either side", () => {
+    const peak = tyreTempGrip(TYRE_PEAK_TEMP);
+    expect(peak).toBeGreaterThan(tyreTempGrip(0.1));
+    expect(peak).toBeGreaterThan(tyreTempGrip(1.2));
+    expect(tyreTempGrip(0.1)).toBeGreaterThan(0.7);
+    expect(peak).toBeLessThan(1.1);
+  });
+
+  it("starts cold and warms up as the car works them", () => {
+    const car = freshCar();
+    const cold = car.tyreTemp;
+    drive(car, input({ throttle: 1 }), 12);
+    expect(cold).toBeLessThan(0.3);
+    expect(car.tyreTemp).toBeGreaterThan(cold + 0.1);
+    expect(car.tyreGrip).toBeGreaterThan(tyreTempGrip(cold));
+  });
+
+  it("cold tyres give away grip in the first corner", () => {
+    // Identical cars at identical speed; the only difference is tyre temperature.
+    const warm = freshCar();
+    const cold = freshCar();
+    drive(warm, input({ throttle: 1 }), 12);
+    drive(cold, input({ throttle: 1 }), 12);
+    cold.tyreTemp = 0.08;
+    warm.tyreTemp = TYRE_PEAK_TEMP;
+    warm.speedR = 7;
+    cold.speedR = 7;
+    const step = input({ throttle: 0.6, steer: 0.7 });
+    drive(warm, step, 0.35);
+    drive(cold, step, 0.35);
+    expect(cold.tyreGrip).toBeLessThan(warm.tyreGrip);
+    expect(Math.abs(cold.speedR)).toBeGreaterThan(Math.abs(warm.speedR));
+  });
+
+  it("wears out over a race distance and costs grip when it does", () => {
+    const car = freshCar();
+    drive(car, input({ throttle: 1 }), 20);
+    const early = car.tyreWear;
+    drive(car, input({ throttle: 1 }), 120);
+    expect(early).toBeLessThan(0.2);
+    expect(car.tyreWear).toBeGreaterThan(early);
+    expect(car.tyreWear).toBeLessThan(1);
+    expect(car.tyreGrip).toBeLessThan(1.03);
+  });
+
+  it("sliding destroys tyres faster than driving straight", () => {
+    const straight = freshCar();
+    drive(straight, input({ throttle: 1 }), 30);
+    const sliding = freshCar();
+    const dt = 1 / 120;
+    for (let i = 0; i < 30 / dt; i++) {
+      sliding.speedR = 9;
+      sliding.step(input({ throttle: 1, steer: 1 }), dt, flatTerrain(), straightTrack());
+    }
+    expect(sliding.tyreWear).toBeGreaterThan(straight.tyreWear * 1.5);
+  });
+
+  it("better rubber lasts longer", () => {
+    const stock = new CarPhysics(tuningFromClass(carClassById("coyote")));
+    const tuned = new CarPhysics(
+      tuningFromClass(carClassById("coyote"), { engine: 0, tyres: 3, brakes: 0, nitrous: 0 }),
+    );
+    expect(tuned.tuning.tyreWearRate).toBeLessThan(stock.tuning.tyreWearRate);
+    for (const car of [stock, tuned]) {
+      car.place(0, 0, 0, flatTerrain(), straightTrack());
+      car.resetRaceState();
+      drive(car, input({ throttle: 1 }), 60);
+    }
+    expect(tuned.tyreWear).toBeLessThan(stock.tyreWear);
+  });
+
+  it("compounds trade grip against durability", () => {
+    const make = (id: string) => {
+      const car = new CarPhysics(tuningFromClass(carClassById("coyote"), undefined, id));
+      car.place(0, 0, 0, flatTerrain(), straightTrack());
+      car.resetRaceState();
+      return car;
+    };
+    const soft = make("soft");
+    const hard = make("hard");
+    expect(soft.tuning.grip).toBeGreaterThan(hard.tuning.grip);
+    for (const car of [soft, hard]) drive(car, input({ throttle: 1 }), 60);
+    expect(soft.tyreWear).toBeGreaterThan(hard.tyreWear * 1.5);
+    // Softs also switch on sooner, which is why they win short races.
+    const softWarm = make("soft");
+    const hardWarm = make("hard");
+    for (const car of [softWarm, hardWarm]) drive(car, input({ throttle: 1 }), 6);
+    expect(softWarm.tyreTemp).toBeGreaterThan(hardWarm.tyreTemp);
+  });
+
+  it("resets with the rest of the race state", () => {
+    const car = freshCar();
+    drive(car, input({ throttle: 1 }), 30);
+    expect(car.tyreWear).toBeGreaterThan(0);
+    car.resetRaceState();
+    expect(car.tyreWear).toBe(0);
+    expect(car.tyreTemp).toBeLessThan(0.3);
+  });
+});

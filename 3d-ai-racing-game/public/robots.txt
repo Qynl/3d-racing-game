@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://qynl.github.io/3d-racing-game/sitemap.xml

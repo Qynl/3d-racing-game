@@ -1,0 +1,20 @@
+{
+  "name": "sundown-rally-root",
+  "private": true,
+  "description": "Root convenience wrapper — the game lives in 3d-ai-racing-game/",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "postinstall": "npm --prefix 3d-ai-racing-game install",
+    "dev": "npm --prefix 3d-ai-racing-game run dev",
+    "build": "npm --prefix 3d-ai-racing-game run build",
+    "preview": "npm --prefix 3d-ai-racing-game run preview",
+    "test": "npm --prefix 3d-ai-racing-game run test",
+    "typecheck": "npm --prefix 3d-ai-racing-game run typecheck",
+    "lint": "npm --prefix 3d-ai-racing-game run lint",
+    "format": "npm --prefix 3d-ai-racing-game run format",
+    "check": "npm --prefix 3d-ai-racing-game run check"
+  }
+}
