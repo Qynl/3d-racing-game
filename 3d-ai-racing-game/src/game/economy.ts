@@ -13,7 +13,7 @@ export interface CreditSummary {
 }
 
 export interface PayoutInput {
-  mode: "race" | "timetrial" | "championship";
+  mode: "race" | "timetrial" | "championship" | "knockout";
   /** 1-based finishing position. */
   position: number;
   carCount: number;
@@ -48,6 +48,11 @@ export function computePayout(input: PayoutInput): CreditSummary {
 
   if (input.mode === "timetrial") {
     add("Time trial session", 220);
+  } else if (input.mode === "knockout") {
+    // Surviving eliminations is the whole game, so pay per car outlasted.
+    const outlasted = Math.max(0, input.carCount - input.position);
+    add(`Survived to P${input.position}`, 180 + outlasted * 120);
+    if (input.position === 1) add("Last car standing", 400);
   } else {
     const base = POSITION_PAY[Math.min(POSITION_PAY.length, Math.max(1, input.position)) - 1] ?? 160;
     add(`Finished P${input.position}`, base);

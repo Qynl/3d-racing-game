@@ -281,3 +281,33 @@ the opposition from the ground up.
 Tests: **180**, adding the racing-line solver (geometry, speed plan, both directions, all
 four circuits) and a behavioural AI suite that simulates full grids for 40–90 s of race time
 and asserts they stay on the road, spread out, respect grip, attack, err and launch cleanly.
+
+## §9 Strategy: tyres, knockout and turning weather (fourth depth pass)
+
+The racing was good; what was missing was a reason for one lap to feel different from the
+next. This pass adds race-long state that the player has to manage.
+
+- ✅ **Tyre model.** Temperature (cold → working window → overheated, via `tyreTempGrip`) and
+  wear, both fed by lateral slip, braking and speed, both costing lateral grip and braking
+  performance. Off-track running is twice as abrasive; rain cools the rubber. Measured on a
+  mesa stint: a soft set is roughly a second a lap quicker over the first two laps and about
+  a second a lap slower once destroyed — a real crossover rather than a cosmetic bar.
+- ✅ **Three compounds** (soft / medium / hard) chosen in the garage, trading grip (×1.07 →
+  ×0.95), wear (×1.5 → ×0.62) and warm-up speed. Rivals choose their own: the aggressive ones
+  gamble on softs, the metronomes go long, and everyone fits softs for a sprint.
+- ✅ **Garage tyre upgrades now matter twice** — more grip *and* slower wear.
+- ✅ **AI manages its tyres**: corner commitment scales with the grip actually available, and
+  high-racecraft drivers deliberately back off a touch once a set is past half-life.
+- ✅ **Knockout mode.** No lap limit; the last-placed car is dropped after 30 s and then every
+  22 s, with a five-second warning when it is you. Eliminated cars are parked, hidden, muted
+  and dropped from the minimap, but keep their classification, so the results screen shows
+  the order everyone went out in. Payout scales with how long you survived.
+- ✅ **Changeable weather.** A front rolls through mid-race: visuals switch at once, grip ramps
+  over ten seconds, and the AI re-evaluates its corner speeds against the new surface.
+- ✅ **HUD.** Tyre chip with compound, temperature marker against the working window and wear
+  percentage; knockout clock with the car in the drop zone and the survivor count; the timing
+  tower greys out and strikes through cars that are out.
+
+Tests: **195**, adding the tyre physics (warm-up, cold-grip loss, wear over distance, sliding
+cost, compound trade-offs, upgrade durability), knockout payouts, mode/weather validation and
+the new HUD and menu states.

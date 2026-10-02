@@ -297,7 +297,11 @@ export class AIController {
     const gripFactor = Math.sqrt(clamp(car.conditionGrip, 0.3, 1));
     const wetAllowance = 1 - (1 - gripFactor) * (1.3 - this.params.wetSkill * 0.6);
     const damageFactor = 1 - car.damage * 0.12;
-    const bravery = this.params.cornerGrip * wetAllowance * damageFactor;
+    // Worn or cold rubber means less corner speed — and the thoughtful drivers
+    // back off a touch more to make a set last.
+    const tyreFactor = 0.82 + 0.18 * clamp(car.tyreGrip, 0.6, 1.05);
+    const manage = car.tyreWear > 0.55 ? 1 - (car.tyreWear - 0.55) * 0.12 * this.params.racecraft : 1;
+    const bravery = this.params.cornerGrip * wetAllowance * damageFactor * tyreFactor * manage;
 
     let targetSpeed = top;
     let tightestAhead = 0;

@@ -589,6 +589,56 @@ export const DRIVERS: DriverDef[] = [
 
 export const MAX_RIVALS = DRIVERS.length;
 
+// ---------------------------------------------------------------- tyres
+
+/** A tyre compound: the race-long trade between outright grip and durability. */
+export interface TyreCompound {
+  id: string;
+  name: string;
+  short: string;
+  /** Multiplier on lateral grip. */
+  grip: number;
+  /** Multiplier on wear rate. */
+  wear: number;
+  /** Multiplier on how fast the rubber comes up to temperature. */
+  warmth: number;
+  blurb: string;
+}
+
+export const TYRE_COMPOUNDS: TyreCompound[] = [
+  {
+    id: "soft",
+    name: "Soft",
+    short: "S",
+    grip: 1.07,
+    wear: 1.5,
+    warmth: 1.35,
+    blurb: "Huge grip, warms instantly, gone by the end of a long race",
+  },
+  {
+    id: "medium",
+    name: "Medium",
+    short: "M",
+    grip: 1,
+    wear: 1,
+    warmth: 1,
+    blurb: "The honest compromise",
+  },
+  {
+    id: "hard",
+    name: "Hard",
+    short: "H",
+    grip: 0.95,
+    wear: 0.62,
+    warmth: 0.75,
+    blurb: "Slow to switch on, still there at the flag",
+  },
+];
+
+export function compoundById(id: string): TyreCompound {
+  return TYRE_COMPOUNDS.find((c) => c.id === id) ?? TYRE_COMPOUNDS[1];
+}
+
 /** Rival names in grid order. Derived so it can never drift from the roster. */
 export const AI_NAMES = DRIVERS.map((d) => d.name);
 

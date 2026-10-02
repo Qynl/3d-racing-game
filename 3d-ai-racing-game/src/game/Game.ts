@@ -19,6 +19,7 @@ import {
 } from "./car";
 import {
   CAR_COLORS,
+  compoundById,
   driversFor,
   type DifficultyDef,
   type DriverDef,
@@ -47,6 +48,7 @@ import {
   type SkyPalette,
   type TimeOfDayId,
   WEATHERS,
+  WEATHER_ORDER,
   type WeatherDef,
   type WeatherId,
   applySkyPalette,
@@ -79,6 +81,11 @@ import {
   buildTrackMesh,
 } from "./track";
 
+/** Seconds before the first car is dropped in Knockout. */
+export const KNOCKOUT_FIRST = 30;
+/** Seconds between drops after that. */
+export const KNOCKOUT_INTERVAL = 22;
+
 interface CarEntity {
   physics: CarPhysics;
   visual: CarVisual;
@@ -94,6 +101,8 @@ interface CarEntity {
   lapTimes: number[];
   finished: boolean;
   finishTime: number | null;
+  /** Knockout: the elimination round this car went out in, 0 = still running. */
+  knockedOutAt: number;
   input: CarInput;
   dustAcc: number;
   // lap validation
@@ -481,7 +490,7 @@ export class Game {
   /** Resolves the weather setting, rolling the dice when it is "random". */
   private rollWeather(): WeatherDef {
     const want = this.settings.weather;
-    if (want === "random") {
+    if (want === "random" || want === "changeable") {
       // Clear weather stays the most likely outcome; storms are an event.
       const table: WeatherId[] = ["clear", "clear", "clear", "overcast", "overcast", "rain", "sandstorm"];
       return WEATHERS[table[Math.floor(Math.random() * table.length)]];
@@ -560,6 +569,15 @@ export class Game {
       // where inside that envelope they sit, so every rival feels different
       // without any of them breaking the difficulty you chose.
       const params: AIParams = aiParamsFor(diff, d);
+      // Rivals gamble on rubber according to temperament: the aggressive ones
+      // bolt on softs and hope, the careful ones go long.
+      const stintLaps = s.mode === "knockout" ? 4 : s.laps;
+      const rivalCompound =
+        d.aggression > 0.85 || stintLaps <= 2
+          ? "soft"
+          : d.consistency > 0.85 && stintLaps >= 5
+            ? "hard"
+            : "medium";
       this.cars.push(
         this.makeEntity(
           d.color,
@@ -567,10 +585,18 @@ export class Game {
           new AIController(this.track, params, i + 1, this.line),
           d.name,
           playerClass.id,
+          rivalCompound,
         ),
       );
     });
-    const player = this.makeEntity(CAR_COLORS[s.carColor].hex, 1, null, "YOU", playerClass.id);
+    const player = this.makeEntity(
+      CAR_COLORS[s.carColor].hex,
+      1,
+      null,
+      "YOU",
+      playerClass.id,
+      s.tyreCompound,
+    );
     this.cars.push(player);
     this.player = player;
 
@@ -595,6 +621,7 @@ export class Game {
     ai: AIController | null,
     name: string,
     classId: string,
+    compound = "medium",
   ): CarEntity {
     const visual = buildCarVisual(color, num, { classId });
     this.scene.add(visual.root);
@@ -603,15 +630,19 @@ export class Game {
     const tuning = tuningFromClass(
       carClassById(classId),
       ai ? undefined : useGameStore.getState().upgradesFor(classId),
+      compound,
     );
     if (ai) {
       // Rivals use the reference tuning so difficulty stays meaningful whatever
-      // the player picked.
+      // the player picked — but they do choose their own rubber.
+      const c = compoundById(compound);
       tuning.topSpeed = MAX_SPEED;
-      tuning.grip = 9;
+      tuning.grip = 9 * c.grip;
       tuning.steer = 2.7;
       tuning.engine = 21;
       tuning.brake = 40;
+      tuning.tyreWearRate = c.wear;
+      tuning.tyreWarmth = c.warmth;
     }
     return {
       physics: new CarPhysics(tuning),
@@ -627,6 +658,7 @@ export class Game {
       lapTimes: [],
       finished: false,
       finishTime: null,
+      knockedOutAt: 0,
       input: { ...NEUTRAL_INPUT },
       dustAcc: 0,
       sectorsHit: new Array(SECTOR_COUNT).fill(false),
@@ -717,6 +749,7 @@ export class Game {
       e.lapTimes = [];
       e.finished = false;
       e.finishTime = null;
+      e.knockedOutAt = 0;
       e.dustAcc = 0;
       e.input = { ...NEUTRAL_INPUT };
       e.sectorsHit.fill(false);
@@ -866,7 +899,14 @@ export class Game {
         useGameStore.getState().pushToast({ text: `${rolled.name} conditions`, kind: "info" });
       }
     }
-    this.totalLaps = settings.laps;
+    const knockout = settings.mode === "knockout";
+    // Knockout runs until one car is left, so the lap counter must never end it.
+    this.totalLaps = knockout ? 99 : settings.laps;
+    this.knockoutRound = 0;
+    this.knockoutTimer = knockout ? KNOCKOUT_FIRST : 0;
+    this.knockoutWarned = false;
+    this.weatherTimer = settings.weather === "changeable" ? 40 + Math.random() * 25 : 0;
+    this.gripNow = this.weather.grip;
     this.cameraMode = settings.cameraMode;
     this.quality = QUALITY_PRESETS[settings.quality] ?? this.quality;
     this.createCars();
@@ -929,6 +969,16 @@ export class Game {
   private pausedFrom: Screen = "racing";
   /** Throttles rival incident callouts. */
   private incidentCooldown = 0;
+  /** Knockout: seconds until the next car is dropped. */
+  private knockoutTimer = 0;
+  /** Knockout: how many cars have been dropped so far. */
+  private knockoutRound = 0;
+  /** Knockout: true once the "you are last" warning has fired this round. */
+  private knockoutWarned = false;
+  /** Changeable weather: seconds until the front rolls through. */
+  private weatherTimer = 0;
+  /** Grip actually applied to the cars, ramped when the weather turns. */
+  private gripNow = 1;
 
   resume() {
     if (this.state !== "paused") return;
@@ -1109,8 +1159,8 @@ export class Game {
     this.sky.position.copy(this.camera.position);
     this.skid.update(dt);
     this.precip.update(dt, this.camera.position);
-    const grip = this.weather.grip;
-    for (const c of this.cars) c.physics.conditionGrip = grip;
+    this.updateWeather(dt);
+    for (const c of this.cars) c.physics.conditionGrip = this.gripNow;
 
     if (this.state === "menu") {
       for (const c of this.cars) if (c.tag) c.tag.visible = false;
@@ -1204,7 +1254,17 @@ export class Game {
     for (let i = 0, v = 1; i < this.cars.length; i++) {
       const e = this.cars[i];
       if (e === this.player) continue;
-      this.audio.updateEngine(v, e.physics.speedF, e.input.throttle, dt, true, e.physics.boosting);
+      // A knocked-out car is parked and silent, but it keeps its voice slot so
+      // the remaining cars do not get reshuffled mid-race.
+      const live = !e.knockedOutAt;
+      this.audio.updateEngine(
+        v,
+        live ? e.physics.speedF : 0,
+        live ? e.input.throttle : 0,
+        dt,
+        live,
+        live && e.physics.boosting,
+      );
       this.audio.setEnginePosition(v, e.physics.pos.x, e.physics.pos.y + 0.6, e.physics.pos.z);
       v++;
     }
@@ -1314,9 +1374,11 @@ export class Game {
     const diff = DIFFICULTIES[this.settings.difficulty];
     // Rivals respect the conditions too: corner speed scales with the square
     // root of grip, which is what the physics actually gives them.
-    const gripScale = Math.sqrt(this.weather.grip);
+    const gripScale = Math.sqrt(this.gripNow);
+    this.updateKnockout(dt);
+
     for (const e of this.cars) {
-      if (!e.ai) continue;
+      if (!e.ai || e.knockedOutAt) continue;
       // Weather scales the driver's own corner commitment, not the raw
       // difficulty value, so personalities survive a rain shower.
       e.ai.params.cornerGrip = e.ai.baseCornerGrip * gripScale;
@@ -1353,10 +1415,14 @@ export class Game {
     const sub = 2;
     const h = dt / sub;
     for (let s = 0; s < sub; s++) {
-      for (const e of this.cars) e.physics.step(e.input, h, this.terrain, this.track);
+      for (const e of this.cars) {
+        if (e.knockedOutAt) continue;
+        e.physics.step(e.input, h, this.terrain, this.track);
+      }
       this.resolveCollisions();
     }
     for (const e of this.cars) {
+      if (e.knockedOutAt) continue;
       e.physics.syncVisual(e.visual, this.time);
       if (e.physics.landingImpact > 3) this.onLanding(e);
       if (e === player && e.physics.chargeBanked > 0) this.audio.boostPickup();
@@ -1384,6 +1450,7 @@ export class Game {
       p.speedR = p.vel.dot(rgt);
     };
     for (const e of this.cars) {
+      if (e.knockedOutAt) continue;
       const p = e.physics;
       // world bounds
       const rr = Math.sqrt(p.pos.x * p.pos.x + p.pos.z * p.pos.z);
@@ -1672,7 +1739,7 @@ export class Game {
     } else if (isSessionBest) {
       store.pushToast({ text: "Session best lap", sub: formatClock(lapTime), kind: "good" });
     }
-    if (newCrossings === this.totalLaps) {
+    if (newCrossings === this.totalLaps && this.settings.mode !== "knockout") {
       store.pushToast({ text: "Final lap", kind: "info" });
     }
   }
@@ -1689,11 +1756,81 @@ export class Game {
 
   private ranking(): CarEntity[] {
     return [...this.cars].sort((a, b) => {
+      // Knocked-out cars are classified behind everyone still running, in
+      // reverse elimination order: the longer you survived, the better you did.
+      if (a.knockedOutAt || b.knockedOutAt) {
+        if (a.knockedOutAt && b.knockedOutAt) return b.knockedOutAt - a.knockedOutAt;
+        return a.knockedOutAt ? 1 : -1;
+      }
       if (a.finished && b.finished) return (a.finishTime ?? 0) - (b.finishTime ?? 0);
       if (a.finished) return -1;
       if (b.finished) return 1;
       return b.unwrapped - a.unwrapped;
     });
+  }
+
+  /** Cars still in the running (knockout). */
+  private survivors(): CarEntity[] {
+    return this.cars.filter((c) => !c.knockedOutAt);
+  }
+
+  /**
+   * Knockout: drop the last-placed car on a timer until one is left.
+   *
+   * A dropped car is parked rather than deleted — its visual is hidden, its AI
+   * stops being asked for input, and it keeps its classification so the results
+   * screen can show the order everyone went out in.
+   */
+  private updateKnockout(dt: number) {
+    if (this.settings.mode !== "knockout" || this.state !== "racing") return;
+    const store = useGameStore.getState();
+    const alive = this.survivors();
+    if (alive.length <= 1) return;
+
+    this.knockoutTimer -= dt;
+    if (this.knockoutTimer > 0) {
+      // 5-second warning for whoever is in the drop zone.
+      if (this.knockoutTimer <= 5 && !this.knockoutWarned) {
+        this.knockoutWarned = true;
+        const last = this.ranking().filter((c) => !c.knockedOutAt).pop();
+        if (last === this.player) {
+          store.pushToast({ text: "Danger", sub: "Last place — 5 seconds", kind: "bad" });
+          this.audio.badChime();
+        }
+      }
+      return;
+    }
+
+    const order = this.ranking().filter((c) => !c.knockedOutAt);
+    const victim = order[order.length - 1];
+    this.knockoutRound++;
+    this.knockoutWarned = false;
+    victim.knockedOutAt = this.knockoutRound;
+    victim.visual.root.visible = false;
+    victim.physics.boosting = false;
+    if (victim.tag) victim.tag.visible = false;
+
+    const left = this.survivors().length;
+    if (victim === this.player) {
+      store.pushToast({ text: "Eliminated", sub: `P${left + 1}`, kind: "bad" });
+      this.onPlayerFinish();
+      return;
+    }
+    store.pushToast({
+      text: `${victim.name} is out`,
+      sub: left > 1 ? `${left} cars left` : "You survived",
+      kind: "good",
+    });
+    this.audio.lapChime();
+
+    if (left <= 1) {
+      // Last car standing is the player (anyone else would have knocked them out).
+      this.player!.finished = true;
+      this.player!.finishTime = this.raceTime;
+      this.onPlayerFinish();
+      return;
+    }
+    this.knockoutTimer = KNOCKOUT_INTERVAL;
   }
 
   /**
@@ -1788,13 +1925,16 @@ export class Game {
       trackId: this.settings.trackId,
       cars: order.map((c) => {
         const proj = this.projectedTime(c);
+        const out = c.knockedOutAt > 0;
         return {
           name: c.name,
           color: c.color,
-          time: proj.time,
+          // An eliminated car has no meaningful finish time.
+          time: out ? null : proj.time,
           isPlayer: c === player,
           bestLap: c.lapTimes.length ? Math.min(...c.lapTimes) : null,
-          provisional: proj.provisional,
+          provisional: out ? false : proj.provisional,
+          out,
         };
       }),
     };
@@ -2009,6 +2149,43 @@ export class Game {
     this.particles.update(dt);
   }
 
+  /**
+   * Changeable weather.
+   *
+   * A front rolls through every 45-75 s of racing: the sky, lights, fog and
+   * precipitation switch to the new preset immediately (that is the visual
+   * cue), while the *grip* ramps across ten seconds so the track goes slippery
+   * at the rate water actually arrives — and the tyres have to cope.
+   */
+  private updateWeather(dt: number) {
+    const target = this.weather.grip;
+    // Ramp towards the current preset's grip rather than snapping to it.
+    const rate = 1 / 10;
+    if (this.gripNow < target) this.gripNow = Math.min(target, this.gripNow + rate * dt);
+    else if (this.gripNow > target) this.gripNow = Math.max(target, this.gripNow - rate * dt);
+
+    if (this.settings.weather !== "changeable" || this.state !== "racing") return;
+    this.weatherTimer -= dt;
+    if (this.weatherTimer > 0) return;
+    this.weatherTimer = 45 + Math.random() * 30;
+
+    // Walk one step along the clear -> overcast -> rain -> sandstorm scale so
+    // the change is a front moving in, not a teleport to a different planet.
+    const i = WEATHER_ORDER.indexOf(this.weather.id);
+    const dir = i === 0 ? 1 : i === WEATHER_ORDER.length - 1 ? -1 : Math.random() < 0.5 ? -1 : 1;
+    const next = WEATHERS[WEATHER_ORDER[i + dir]];
+    if (!next || next.id === this.weather.id) return;
+    this.applyTimeOfDay(this.settings.timeOfDay, next);
+    this.precip.configure(next, this.camera.position);
+    const worse = next.grip < this.weather.grip + 1e-6 && next.id !== "clear";
+    useGameStore.getState().pushToast({
+      text: `${next.name} moving in`,
+      sub: worse ? "Grip is going away" : "Track is drying out",
+      kind: worse ? "bad" : "good",
+    });
+    this.audio.badChime();
+  }
+
   private updateSun(focus: THREE.Vector3) {
     this.sun.position.copy(focus).addScaledVector(SUN_DIR, 150);
     this.sun.target.position.copy(focus);
@@ -2182,6 +2359,7 @@ export class Game {
         gap: e === leader ? 0 : behind / ref,
         lap: clamp(e.crossings, 1, this.totalLaps),
         finished: e.finished,
+        out: e.knockedOutAt > 0,
       };
     });
 
@@ -2192,7 +2370,8 @@ export class Game {
       gear: p.speedF < -0.5 ? 0 : gear,
       rpm,
       lap,
-      totalLaps: this.totalLaps,
+      // Knockout has no lap target: the HUD shows a bare lap counter.
+      totalLaps: this.settings.mode === "knockout" ? 0 : this.totalLaps,
       position: idx + 1,
       carCount: this.cars.length,
       time: player.finished ? (player.finishTime ?? this.raceTime) : this.raceTime,
@@ -2200,7 +2379,10 @@ export class Game {
       bestLap: store.recordFor(this.settings.trackId).bestLap,
       sessionBestLap: this.sessionBestLap,
       wrongWay: this.wrongTimer > 1.0 && this.state === "racing",
-      finalLap: player.crossings === this.totalLaps && !player.finished,
+      finalLap:
+        this.settings.mode !== "knockout" &&
+        player.crossings === this.totalLaps &&
+        !player.finished,
       offTrack: !p.onTrack,
       drifting: Math.abs(p.speedR) > 6,
       airborne: !p.grounded && p.airTime > 0.25,
@@ -2217,12 +2399,24 @@ export class Game {
       sectorIndex: this.track.sectorOf(inLap),
       draft: p.draft,
       damage: p.damage,
+      tyreWear: p.tyreWear,
+      tyreTemp: p.tyreTemp,
+      tyreGrip: p.tyreGrip,
       conditions: this.weather.id === "clear" ? "" : this.weather.name,
-      lowGrip: this.weather.grip < 0.95,
+      lowGrip: this.gripNow < 0.95,
       rivalAhead,
       rivalBehind,
       battle,
       order: orderRows,
+      knockoutIn:
+        this.settings.mode === "knockout" && this.state === "racing" && this.survivors().length > 1
+          ? Math.max(0, this.knockoutTimer)
+          : null,
+      atRisk:
+        this.settings.mode === "knockout" && this.survivors().length > 1
+          ? (order.filter((c) => !c.knockedOutAt).pop()?.name ?? null)
+          : null,
+      survivors: this.survivors().length,
       revs: 0,
       surface: p.surface,
     });
@@ -2235,7 +2429,9 @@ export class Game {
       this.minimapBounds = computeMinimapBounds(this.track, canvas.width, canvas.height);
     }
     this.minimapScene.track = this.track;
-    this.minimapScene.cars = this.cars;
+    // Eliminated cars drop off the map as well as the track.
+    this.minimapScene.cars =
+      this.settings.mode === "knockout" ? this.cars.filter((c) => !c.knockedOutAt) : this.cars;
     this.minimapScene.player = this.player;
     const gv = this.ghostVisual;
     this.minimapScene.ghost = gv?.root.visible ? { x: gv.root.position.x, z: gv.root.position.z } : null;

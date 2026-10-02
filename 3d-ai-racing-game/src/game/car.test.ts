@@ -1,6 +1,13 @@
 import * as THREE from "three";
 import { beforeEach, describe, expect, it } from "vitest";
-import { CarPhysics, NEUTRAL_INPUT, REVERSE_MAX, tuningFromClass } from "./car";
+import {
+  CarPhysics,
+  NEUTRAL_INPUT,
+  REVERSE_MAX,
+  TYRE_PEAK_TEMP,
+  tuningFromClass,
+  tyreTempGrip,
+} from "./car";
 import type { CarInput } from "./car";
 import { carClassById, trackById } from "./config";
 import type { Terrain } from "./terrain";
@@ -421,5 +428,106 @@ describe("weather grip and garage upgrades", () => {
     tuned.resetRaceState();
     drive(tuned, input({ throttle: 1 }), 4);
     expect(tuned.speedF).toBeGreaterThan(stock.speedF);
+  });
+});
+
+describe("tyres", () => {
+  it("peaks inside the working window and falls off either side", () => {
+    const peak = tyreTempGrip(TYRE_PEAK_TEMP);
+    expect(peak).toBeGreaterThan(tyreTempGrip(0.1));
+    expect(peak).toBeGreaterThan(tyreTempGrip(1.2));
+    expect(tyreTempGrip(0.1)).toBeGreaterThan(0.7);
+    expect(peak).toBeLessThan(1.1);
+  });
+
+  it("starts cold and warms up as the car works them", () => {
+    const car = freshCar();
+    const cold = car.tyreTemp;
+    drive(car, input({ throttle: 1 }), 12);
+    expect(cold).toBeLessThan(0.3);
+    expect(car.tyreTemp).toBeGreaterThan(cold + 0.1);
+    expect(car.tyreGrip).toBeGreaterThan(tyreTempGrip(cold));
+  });
+
+  it("cold tyres give away grip in the first corner", () => {
+    // Identical cars at identical speed; the only difference is tyre temperature.
+    const warm = freshCar();
+    const cold = freshCar();
+    drive(warm, input({ throttle: 1 }), 12);
+    drive(cold, input({ throttle: 1 }), 12);
+    cold.tyreTemp = 0.08;
+    warm.tyreTemp = TYRE_PEAK_TEMP;
+    warm.speedR = 7;
+    cold.speedR = 7;
+    const step = input({ throttle: 0.6, steer: 0.7 });
+    drive(warm, step, 0.35);
+    drive(cold, step, 0.35);
+    expect(cold.tyreGrip).toBeLessThan(warm.tyreGrip);
+    expect(Math.abs(cold.speedR)).toBeGreaterThan(Math.abs(warm.speedR));
+  });
+
+  it("wears out over a race distance and costs grip when it does", () => {
+    const car = freshCar();
+    drive(car, input({ throttle: 1 }), 20);
+    const early = car.tyreWear;
+    drive(car, input({ throttle: 1 }), 120);
+    expect(early).toBeLessThan(0.2);
+    expect(car.tyreWear).toBeGreaterThan(early);
+    expect(car.tyreWear).toBeLessThan(1);
+    expect(car.tyreGrip).toBeLessThan(1.03);
+  });
+
+  it("sliding destroys tyres faster than driving straight", () => {
+    const straight = freshCar();
+    drive(straight, input({ throttle: 1 }), 30);
+    const sliding = freshCar();
+    const dt = 1 / 120;
+    for (let i = 0; i < 30 / dt; i++) {
+      sliding.speedR = 9;
+      sliding.step(input({ throttle: 1, steer: 1 }), dt, flatTerrain(), straightTrack());
+    }
+    expect(sliding.tyreWear).toBeGreaterThan(straight.tyreWear * 1.5);
+  });
+
+  it("better rubber lasts longer", () => {
+    const stock = new CarPhysics(tuningFromClass(carClassById("coyote")));
+    const tuned = new CarPhysics(
+      tuningFromClass(carClassById("coyote"), { engine: 0, tyres: 3, brakes: 0, nitrous: 0 }),
+    );
+    expect(tuned.tuning.tyreWearRate).toBeLessThan(stock.tuning.tyreWearRate);
+    for (const car of [stock, tuned]) {
+      car.place(0, 0, 0, flatTerrain(), straightTrack());
+      car.resetRaceState();
+      drive(car, input({ throttle: 1 }), 60);
+    }
+    expect(tuned.tyreWear).toBeLessThan(stock.tyreWear);
+  });
+
+  it("compounds trade grip against durability", () => {
+    const make = (id: string) => {
+      const car = new CarPhysics(tuningFromClass(carClassById("coyote"), undefined, id));
+      car.place(0, 0, 0, flatTerrain(), straightTrack());
+      car.resetRaceState();
+      return car;
+    };
+    const soft = make("soft");
+    const hard = make("hard");
+    expect(soft.tuning.grip).toBeGreaterThan(hard.tuning.grip);
+    for (const car of [soft, hard]) drive(car, input({ throttle: 1 }), 60);
+    expect(soft.tyreWear).toBeGreaterThan(hard.tyreWear * 1.5);
+    // Softs also switch on sooner, which is why they win short races.
+    const softWarm = make("soft");
+    const hardWarm = make("hard");
+    for (const car of [softWarm, hardWarm]) drive(car, input({ throttle: 1 }), 6);
+    expect(softWarm.tyreTemp).toBeGreaterThan(hardWarm.tyreTemp);
+  });
+
+  it("resets with the rest of the race state", () => {
+    const car = freshCar();
+    drive(car, input({ throttle: 1 }), 30);
+    expect(car.tyreWear).toBeGreaterThan(0);
+    car.resetRaceState();
+    expect(car.tyreWear).toBe(0);
+    expect(car.tyreTemp).toBeLessThan(0.3);
   });
 });

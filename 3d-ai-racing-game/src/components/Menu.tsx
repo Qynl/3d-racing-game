@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { gameHolder } from "../game/Game";
+import { KNOCKOUT_FIRST, KNOCKOUT_INTERVAL, gameHolder } from "../game/Game";
 import {
   BINDABLE,
   type BindAction,
@@ -12,6 +12,7 @@ import {
   QUALITY_ORDER,
   QUALITY_PRESETS,
   TRACKS,
+  TYRE_COMPOUNDS,
   UPGRADES,
   UPGRADE_MAX,
   type QualityId,
@@ -45,7 +46,8 @@ const DIFFS: { id: Difficulty; label: string; desc: string }[] = (["rookie", "pr
 );
 
 const MODES: { id: RaceMode; label: string; desc: string }[] = [
-  { id: "race", label: "Race", desc: "3 AI rivals" },
+  { id: "race", label: "Race", desc: "Full grid" },
+  { id: "knockout", label: "Knockout", desc: "Last place out" },
   { id: "timetrial", label: "Time trial", desc: "You vs ghost" },
   { id: "championship", label: "Season", desc: "4 rounds, points" },
 ];
@@ -100,9 +102,10 @@ function BindRow({
 
 type Tab = "race" | "car" | "options";
 
-const WEATHER_OPTIONS: { id: WeatherId | "random"; label: string; desc: string }[] = [
+const WEATHER_OPTIONS: { id: WeatherId | "random" | "changeable"; label: string; desc: string }[] = [
   ...WEATHER_ORDER.map((id) => ({ id, label: WEATHERS[id].name, desc: WEATHERS[id].blurb })),
   { id: "random" as const, label: "Roll it", desc: "Surprise me each race" },
+  { id: "changeable" as const, label: "Changeable", desc: "Weather turns mid-race" },
 ];
 
 const fmtCredits = (n: number) => `${Math.round(n).toLocaleString()} cr`;
@@ -322,6 +325,7 @@ export default function Menu() {
                   <Label>Mode</Label>
                   <Segmented
                     ariaLabel="Race mode"
+                    columns={2}
                     options={MODES}
                     value={settings.mode}
                     onChange={(mode) => apply({ mode })}
@@ -405,6 +409,12 @@ export default function Menu() {
                     />
                   </div>
                 </div>
+                {settings.mode === "knockout" && (
+                  <div className="rounded-xl border border-clay/40 bg-clay/10 p-3 text-[11px] uppercase tracking-[0.18em] text-cream/70">
+                    Every {KNOCKOUT_INTERVAL} seconds the car in last place is eliminated. First
+                    drop after {KNOCKOUT_FIRST}s — survive to the end to win.
+                  </div>
+                )}
                 {settings.mode === "championship" && (
                   <div className="rounded-xl border border-sand/30 bg-sand/10 p-3 text-[11px] uppercase tracking-[0.18em] text-cream/70">
                     {season && !season.done ? (
@@ -469,7 +479,7 @@ export default function Menu() {
                     onChange={(weather) => apply({ weather })}
                   />
                 </div>
-                <div>
+                <div className={cn(settings.mode === "knockout" && "hidden")}>
                   <Label>Laps</Label>
                   <div className="flex gap-2">
                     {[1, 2, 3, 5, 7].map((n) => (
@@ -562,6 +572,48 @@ export default function Menu() {
                   ))}
                   <div className="mt-1 text-[10px] uppercase tracking-[0.15em] text-cream/40">
                     Upgrades are per chassis and ride with you into every race.
+                  </div>
+                </div>
+                <div>
+                  <Label>Tyres</Label>
+                  <div className="flex flex-col gap-2">
+                    {TYRE_COMPOUNDS.map((c) => (
+                      <button
+                        key={c.id}
+                        role="radio"
+                        aria-checked={settings.tyreCompound === c.id}
+                        onClick={() => {
+                          apply({ tyreCompound: c.id });
+                          gameHolder.game?.refreshCars();
+                        }}
+                        className={cn(
+                          "seg flex items-center gap-3 rounded-xl px-3 py-2 text-left",
+                          settings.tyreCompound === c.id && "active",
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            "font-display flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-sm font-extrabold",
+                            c.id === "soft"
+                              ? "border-clay-bright text-clay-bright"
+                              : c.id === "hard"
+                                ? "border-ice text-ice"
+                                : "border-sand text-sand",
+                          )}
+                        >
+                          {c.short}
+                        </span>
+                        <span>
+                          <span className="font-display block text-base font-bold uppercase tracking-wide text-cream">
+                            {c.name}
+                          </span>
+                          <span className="text-[11px] text-cream/55">{c.blurb}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-1 text-[10px] uppercase tracking-[0.15em] text-cream/40">
+                    Tyres heat up, wear out and lose grip as the race goes on.
                   </div>
                 </div>
                 <div>
@@ -741,8 +793,10 @@ export default function Menu() {
                 ? "Building…"
                 : settings.mode === "race"
                   ? "Start race"
-                  : settings.mode === "timetrial"
-                    ? "Start time trial"
+                  : settings.mode === "knockout"
+                    ? "Start knockout"
+                    : settings.mode === "timetrial"
+                      ? "Start time trial"
                     : season && !season.done
                       ? `Round ${season.raceIndex + 1}`
                       : "Start season"}

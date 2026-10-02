@@ -267,6 +267,12 @@ describe("new settings", () => {
     expect(defaultSettings.keyBinds.throttle).toContain("w");
   });
 
+  it("accepts the knockout mode and changeable weather", () => {
+    useGameStore.getState().setSettings({ mode: "knockout", weather: "changeable" });
+    expect(useGameStore.getState().settings.mode).toBe("knockout");
+    expect(useGameStore.getState().settings.weather).toBe("changeable");
+  });
+
   it("defaults to a three-rival grid and clamps absurd field sizes", () => {
     expect(defaultSettings.rivals).toBe(3);
     useGameStore.getState().setSettings({ rivals: 7 });

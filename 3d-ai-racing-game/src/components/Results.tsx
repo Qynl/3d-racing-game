@@ -30,6 +30,7 @@ export default function Results() {
   }
 
   const timeTrial = results.mode === "timetrial";
+  const knockout = results.mode === "knockout";
   const standings = results.standings ?? [];
   const credits = results.credits;
   const weather = WEATHERS[results.weather] ?? WEATHERS.clear;
@@ -49,8 +50,8 @@ export default function Results() {
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="text-[11px] uppercase tracking-[0.3em] text-cream/55">
-              {track.name} · {timeTrial ? "Time trial" : settings.difficulty} · {settings.laps} laps ·{" "}
-              {weather.name}
+              {track.name} · {timeTrial ? "Time trial" : knockout ? "Knockout" : settings.difficulty} ·{" "}
+              {knockout ? `${results.cars.length} cars` : `${settings.laps} laps`} · {weather.name}
             </div>
             {!timeTrial && (
               <div className="mt-2 flex items-end gap-2">
@@ -141,7 +142,7 @@ export default function Results() {
                   best {formatShort(c.bestLap)}
                 </div>
                 <div className="font-display w-24 text-right text-base tabular-nums text-cream/90 md:w-28 md:text-lg">
-                  {c.time !== null ? formatTime(c.time) : "DNF"}
+                  {c.time !== null ? formatTime(c.time) : c.out ? "OUT" : "DNF"}
                   {c.provisional && c.time !== null && (
                     <span className="ml-1 text-[9px] uppercase tracking-wider text-cream/40">est</span>
                   )}

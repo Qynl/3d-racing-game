@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { gameHolder } from "../game/Game";
-import { SECTOR_COUNT } from "../game/config";
+import { SECTOR_COUNT, compoundById } from "../game/config";
 import type { HudData } from "../game/store";
 import { formatDelta, formatGap, formatShort, formatTime, ordinal, useGameStore } from "../game/store";
 import { cn } from "../utils/cn";
@@ -11,6 +11,7 @@ const SECTOR_FLASH_MS = 2400;
 /** Live timing tower: the running order with gaps to the leader. */
 function TimingTower() {
   const order = useGameStore((s) => s.hud.order);
+  const atRisk = useGameStore((s) => s.hud.atRisk);
   if (order.length < 2) return null;
   return (
     <div className="hud-chip mt-2 hidden w-[186px] rounded-2xl px-2.5 py-2 md:block">
@@ -22,6 +23,8 @@ function TimingTower() {
             className={cn(
               "flex items-center gap-1.5 rounded px-1 py-[3px] text-[11px] tabular-nums",
               row.isPlayer ? "bg-sand/15 text-cream" : "text-cream/70",
+              row.out && "opacity-40 line-through",
+              !row.out && atRisk === row.name && "bg-clay/25 text-clay-bright",
             )}
           >
             <span className="w-3 text-right font-display font-bold text-cream/50">{i + 1}</span>
@@ -34,7 +37,7 @@ function TimingTower() {
               {row.name}
             </span>
             <span className="text-[10px] text-cream/55">
-              {i === 0 ? "LEAD" : row.gap === null ? "—" : `+${row.gap.toFixed(1)}`}
+              {row.out ? "OUT" : i === 0 ? "LEAD" : row.gap === null ? "—" : `+${row.gap.toFixed(1)}`}
             </span>
           </li>
         ))}
@@ -227,6 +230,54 @@ function RevMeter({ revs }: { revs: number }) {
   );
 }
 
+/**
+ * Tyre readout: wear as a bar, temperature as a marker on the working window.
+ * Hidden until the tyres have actually done something, so a one-lap blast keeps
+ * the HUD clean.
+ */
+function TyreBar({
+  wear,
+  temp,
+  grip,
+  compound,
+}: {
+  wear: number;
+  temp: number;
+  grip: number;
+  compound: string;
+}) {
+  if (wear < 0.04 && temp > 0.3) return null;
+  const cold = temp < 0.38;
+  const hot = temp > 0.92;
+  const label = cold ? "Cold" : hot ? "Hot" : "Ready";
+  return (
+    <div className="hud-chip mt-2 flex items-center gap-2 rounded-xl px-3 py-1.5">
+      <span className="text-[9px] uppercase tracking-[0.25em] text-cream/55">
+        Tyres {compound}
+      </span>
+      <div className="relative h-1.5 w-20 overflow-hidden rounded-full bg-cream/10 md:w-28">
+        {/* working window */}
+        <div className="absolute inset-y-0 left-[38%] w-[34%] bg-juniper/30" />
+        <div
+          className={cn(
+            "absolute inset-y-0 w-[3px] rounded-full",
+            cold ? "bg-ice" : hot ? "bg-clay-bright" : "bg-juniper-bright",
+          )}
+          style={{ left: `${Math.round(Math.min(1, temp) * 97)}%` }}
+        />
+      </div>
+      <span
+        className={cn(
+          "text-[9px] uppercase tracking-[0.2em]",
+          grip < 0.9 ? "text-clay-bright" : cold ? "text-ice" : "text-cream/50",
+        )}
+      >
+        {label} · {Math.round(wear * 100)}%
+      </span>
+    </div>
+  );
+}
+
 function DamageBar({ damage }: { damage: number }) {
   if (damage < 0.06) return null;
   return (
@@ -244,6 +295,7 @@ function DamageBar({ damage }: { damage: number }) {
 
 export default function HUD({ touch = false }: { touch?: boolean }) {
   const hud = useGameStore((s) => s.hud);
+  const compound = useGameStore((s) => compoundById(s.settings.tyreCompound).short);
   const screen = useGameStore((s) => s.screen);
   const fps = useGameStore((s) => s.fps);
   const showFps = useGameStore((s) => s.settings.autoQuality);
@@ -319,7 +371,9 @@ export default function HUD({ touch = false }: { touch?: boolean }) {
           <div className="text-[9px] uppercase tracking-[0.3em] text-cream/55 md:text-[10px]">Lap</div>
           <div className="font-display text-[26px] font-extrabold leading-none text-cream md:text-[38px]">
             {hud.lap}
-            <span className="text-base text-cream/50 md:text-xl">/{hud.totalLaps}</span>
+            {hud.totalLaps > 0 && (
+              <span className="text-base text-cream/50 md:text-xl">/{hud.totalLaps}</span>
+            )}
           </div>
         </div>
       </div>
@@ -360,6 +414,18 @@ export default function HUD({ touch = false }: { touch?: boolean }) {
                   ▼ {hud.rivalBehind ?? ""} {formatGap(hud.gapBehind)}
                 </span>
               )}
+            </div>
+          )}
+          {hud.knockoutIn !== null && (
+            <div
+              className={cn(
+                "mt-1 flex items-center gap-2 rounded-lg px-2 py-1 text-[10px] uppercase tracking-[0.2em] tabular-nums",
+                hud.knockoutIn <= 5 ? "bg-clay/30 text-clay-bright" : "bg-ink/40 text-cream/60",
+              )}
+            >
+              <span>Drop in {hud.knockoutIn.toFixed(1)}s</span>
+              {hud.atRisk && <span className="text-clay-bright">{hud.atRisk}</span>}
+              <span className="text-cream/40">{hud.survivors} left</span>
             </div>
           )}
           {hud.battle && (
@@ -465,6 +531,12 @@ export default function HUD({ touch = false }: { touch?: boolean }) {
           boosting={hud.boosting}
           offTrack={hud.offTrack}
           drifting={hud.drifting}
+        />
+        <TyreBar
+          wear={hud.tyreWear}
+          temp={hud.tyreTemp}
+          grip={hud.tyreGrip}
+          compound={compound}
         />
         <DamageBar damage={hud.damage} />
       </div>

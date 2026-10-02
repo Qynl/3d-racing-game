@@ -6,6 +6,8 @@ import {
   DEFAULT_KEYBINDS,
   DIFFICULTIES,
   NO_UPGRADES,
+  TYRE_COMPOUNDS,
+  compoundById,
   QUALITY_ORDER,
   QUALITY_PRESETS,
   SECTOR_COUNT,
@@ -209,3 +211,26 @@ describe("weather table", () => {
     expect(WEATHERS.rain.grip).toBeLessThan(WEATHERS.overcast.grip);
   });
 });
+
+describe("tyre compounds", () => {
+  it("orders grip against wear so the choice is a real trade", () => {
+    const soft = compoundById("soft");
+    const medium = compoundById("medium");
+    const hard = compoundById("hard");
+    expect(soft.grip).toBeGreaterThan(medium.grip);
+    expect(medium.grip).toBeGreaterThan(hard.grip);
+    expect(soft.wear).toBeGreaterThan(medium.wear);
+    expect(medium.wear).toBeGreaterThan(hard.wear);
+    expect(soft.warmth).toBeGreaterThan(hard.warmth);
+  });
+
+  it("falls back to the medium compound for anything unknown", () => {
+    expect(compoundById("marshmallow").id).toBe("medium");
+    expect(TYRE_COMPOUNDS).toHaveLength(3);
+    for (const c of TYRE_COMPOUNDS) {
+      expect(c.short).toHaveLength(1);
+      expect(c.blurb.length).toBeGreaterThan(5);
+    }
+  });
+});
+

@@ -1,5 +1,12 @@
 import * as THREE from "three";
-import { type CarClassDef, NO_UPGRADES, type UpgradeLevels, normaliseUpgrades } from "./config";
+import {
+  type CarClassDef,
+  NO_UPGRADES,
+  type TyreCompound,
+  type UpgradeLevels,
+  compoundById,
+  normaliseUpgrades,
+} from "./config";
 import { clamp, damp } from "./noise";
 import { Terrain } from "./terrain";
 import { Track } from "./track";
@@ -292,20 +299,47 @@ export interface CarTuning {
   steer: number;
   boostTank: number;
   boostPower: number;
+  /** How quickly the tyres wear out, 1 = reference compound. */
+  tyreWearRate: number;
+  /** How quickly the tyres come up to temperature, 1 = reference compound. */
+  tyreWarmth: number;
 }
 
-export function tuningFromClass(def: CarClassDef, upgrades: UpgradeLevels = NO_UPGRADES): CarTuning {
+/** Temperature the tyres work best at, on the 0..1 scale used by the model. */
+export const TYRE_PEAK_TEMP = 0.62;
+
+/**
+ * Grip multiplier for a tyre temperature.
+ *
+ * Cold tyres slither, the working window is a plateau around {@link TYRE_PEAK_TEMP},
+ * and overheated tyres go greasy. The curve is deliberately gentle — this is an
+ * arcade game, so the first corner of a race should feel different, not undriveable.
+ */
+export function tyreTempGrip(temp: number): number {
+  const x = (temp - TYRE_PEAK_TEMP) / 0.44;
+  return clamp(1.03 - x * x * 0.26, 0.78, 1.03);
+}
+
+export function tuningFromClass(
+  def: CarClassDef,
+  upgrades: UpgradeLevels = NO_UPGRADES,
+  compound: TyreCompound | string = "medium",
+): CarTuning {
   const u = normaliseUpgrades(upgrades);
+  const c = typeof compound === "string" ? compoundById(compound) : compound;
   return {
     // Each upgrade level is a modest, predictable step — four levels of
     // everything is quick, not a different category of car.
     topSpeed: def.topSpeed * (1 + u.engine * 0.035),
     engine: def.engine * (1 + u.engine * 0.06),
     brake: def.brake * (1 + u.brakes * 0.08),
-    grip: def.grip * (1 + u.tyres * 0.05),
+    grip: def.grip * (1 + u.tyres * 0.05) * c.grip,
     steer: def.steer * (1 + u.tyres * 0.025),
     boostTank: def.boostTank * (1 + u.nitrous * 0.09),
     boostPower: def.boostPower * (1 + u.nitrous * 0.055),
+    // Better rubber both grips harder and lasts longer.
+    tyreWearRate: c.wear / (1 + u.tyres * 0.14),
+    tyreWarmth: c.warmth,
   };
 }
 
@@ -352,6 +386,14 @@ export class CarPhysics {
   draft = 0;
   /** 0..1 accumulated damage. Costs top speed and steering until it repairs. */
   damage = 0;
+
+  // ---- tyres
+  /** 0..1 tyre temperature; {@link TYRE_PEAK_TEMP} is the working window. */
+  tyreTemp = 0.14;
+  /** 0..1 tyre wear; 1 is a destroyed set. */
+  tyreWear = 0;
+  /** Combined temperature + wear grip multiplier, written every step. */
+  tyreGrip = 1;
   /** Decaying launch assist granted by a well-timed start. */
   launchAssist = 0;
   /** Seconds of bogged-down engine after a botched launch. */
@@ -444,6 +486,9 @@ export class CarPhysics {
   /** Full reset of per-race accumulators. */
   resetRaceState() {
     this.conditionGrip = 1;
+    this.tyreTemp = 0.14;
+    this.tyreWear = 0;
+    this.tyreGrip = tyreTempGrip(0.14);
     this.damage = 0;
     this.draft = 0;
     this.rumble = 0;
@@ -520,7 +565,7 @@ export class CarPhysics {
       this.braking = false;
       if (input.brake > 0) {
         if (vF > 0.3) {
-          aF -= input.brake * T.brake * (0.72 + 0.28 * this.conditionGrip);
+          aF -= input.brake * T.brake * (0.72 + 0.28 * this.conditionGrip) * (0.86 + 0.14 * this.tyreGrip);
           this.braking = true;
         } else {
           aF -= input.brake * T.engine * 0.55 * (1 - clamp(-vF / REVERSE_MAX, 0, 1));
@@ -545,9 +590,41 @@ export class CarPhysics {
       aF -= vF * 0.05;
     }
 
+    // ---- tyres: temperature first, then the wear it causes
+    // Energy going into the tyres: sliding dominates, then braking, then speed.
+    const slide = Math.min(1, Math.abs(vR) / 11);
+    const load = clamp(
+      slide * 1.25 + (this.braking ? input.brake * 0.4 : 0) + Math.abs(vF) / Math.max(1, T.topSpeed) * 0.45,
+      0,
+      1.5,
+    );
+    if (airborne) {
+      // No contact patch, no heat.
+      this.tyreTemp = damp(this.tyreTemp, 0.1, 0.5, dt);
+    } else {
+      // Rain and wet sand pull heat straight back out of the rubber.
+      const ambient = 0.1 * this.conditionGrip * (onTrack ? 1 : 0.8);
+      const target = clamp(ambient + load * 0.68 * T.tyreWarmth, 0, 1.25);
+      const rate = (target > this.tyreTemp ? 0.5 * T.tyreWarmth : 0.28) as number;
+      this.tyreTemp = damp(this.tyreTemp, target, rate, dt);
+      // Wear is driven by sliding and heat, and the desert eats tyres off-track.
+      const abrasion = onTrack ? (onRumble ? 1.35 : 1) : 2.1;
+      this.tyreWear = clamp(
+        this.tyreWear +
+          (0.0017 + slide * 0.0125 + Math.max(0, this.tyreTemp - 0.9) * 0.012) *
+            abrasion *
+            T.tyreWearRate *
+            dt,
+        0,
+        1,
+      );
+    }
+    this.tyreGrip = tyreTempGrip(this.tyreTemp) * (1 - this.tyreWear * 0.19);
+
     // ---- lateral grip
     const wet = this.conditionGrip;
-    const surfaceGrip = (onTrack ? (onRumble ? T.grip * 0.86 : T.grip) : T.grip * 0.47) * wet;
+    const surfaceGrip =
+      (onTrack ? (onRumble ? T.grip * 0.86 : T.grip) : T.grip * 0.47) * wet * this.tyreGrip;
     const gripRate = airborne ? 0.25 : input.handbrake ? T.grip * 0.22 : surfaceGrip;
     vR *= Math.exp(-gripRate * dt);
 

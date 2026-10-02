@@ -269,6 +269,52 @@ describe("screens render without crashing", () => {
     expect(screen.getAllByText(/Racecraft/i).length).toBe(7);
   });
 
+  it("shows the knockout clock, the drop zone and the tyre state", () => {
+    reset({
+      screen: "racing",
+      hud: {
+        ...defaultHud,
+        carCount: 4,
+        knockoutIn: 4.2,
+        atRisk: "MAGPIE",
+        survivors: 3,
+        tyreWear: 0.42,
+        tyreTemp: 0.6,
+        tyreGrip: 0.95,
+        order: [
+          { name: "YOU", color: 0x8899aa, isPlayer: true, gap: 0, lap: 1, finished: false },
+          { name: "MAGPIE", color: 0xb06a9c, isPlayer: false, gap: 2.1, lap: 1, finished: false },
+          { name: "ATLAS", color: 0x4f6b4a, isPlayer: false, gap: 5, lap: 1, finished: false, out: true },
+        ],
+      },
+    });
+    const { container } = render(<HUD />);
+    const text = container.textContent ?? "";
+    expect(text).toContain("Drop in 4.2s");
+    expect(text).toContain("MAGPIE");
+    expect(text).toContain("3 left");
+    expect(text).toContain("OUT");
+    expect(text.toLowerCase()).toContain("tyres");
+    expect(text).toContain("42%");
+  });
+
+  it("offers knockout in the menu and explains the rules", () => {
+    reset();
+    render(<Menu />);
+    fireEvent.click(screen.getByRole("radio", { name: /knockout/i }));
+    expect(useGameStore.getState().settings.mode).toBe("knockout");
+    expect(screen.getByRole("button", { name: /start knockout/i })).toBeTruthy();
+    expect(document.body.textContent).toMatch(/last place is eliminated/i);
+  });
+
+  it("lets you choose a tyre compound before the race", () => {
+    reset();
+    render(<Menu />);
+    fireEvent.click(screen.getByRole("button", { name: /garage/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /soft/i }));
+    expect(useGameStore.getState().settings.tyreCompound).toBe("soft");
+  });
+
   it("renders a fatal error screen instead of the game", () => {
     reset({ fatal: "This browser can't start WebGL." });
     const { container } = render(<App />);

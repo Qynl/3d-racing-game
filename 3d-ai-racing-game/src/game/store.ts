@@ -15,12 +15,13 @@ import {
   type QualityId,
   SECTOR_COUNT,
   TRACKS,
+  TYRE_COMPOUNDS,
   guessQuality,
 } from "./config";
 
 export type Screen = "menu" | "countdown" | "racing" | "paused" | "finished";
 export type Difficulty = "rookie" | "pro" | "legend";
-export type RaceMode = "race" | "timetrial" | "championship";
+export type RaceMode = "race" | "timetrial" | "championship" | "knockout";
 export type TimeOfDay = "sunset" | "noon" | "night";
 export type TouchSteerMode = "buttons" | "slider" | "tilt";
 
@@ -57,10 +58,12 @@ export interface Settings {
   showNameTags: boolean;
   /** Keyboard bindings, action -> list of lowercase key names. */
   keyBinds: Record<string, string[]>;
-  /** Fixed weather, or "random" to roll it per race. */
-  weather: WeatherId | "random";
+  /** Fixed weather, "random" to roll it per race, or "changeable" to let it turn mid-race. */
+  weather: WeatherId | "random" | "changeable";
   /** Number of AI rivals on the grid (1..MAX_RIVALS). */
   rivals: number;
+  /** Tyre compound fitted to the player's car. */
+  tyreCompound: string;
 }
 
 /** Persisted career progress: money in the bank and parts bolted on. */
@@ -109,6 +112,12 @@ export interface HudData {
   draft: number;
   /** 0..1 body damage. */
   damage: number;
+  /** 0..1 tyre wear (1 = destroyed). */
+  tyreWear: number;
+  /** 0..1 tyre temperature; the working window sits around 0.62. */
+  tyreTemp: number;
+  /** Combined tyre grip multiplier, for the HUD colour. */
+  tyreGrip: number;
   /** 0..1 launch revs while the lights are on. */
   revs: number;
   surface: "track" | "rumble" | "sand";
@@ -126,10 +135,18 @@ export interface HudData {
   battle: boolean;
   /** Live running order, leader first. */
   order: RunningOrderRow[];
+  /** Knockout: seconds until the next car is dropped, null outside the mode. */
+  knockoutIn: number | null;
+  /** Knockout: who is currently in the drop zone. */
+  atRisk: string | null;
+  /** Knockout: cars still running. */
+  survivors: number;
 }
 
 /** One row of the live timing tower. */
 export interface RunningOrderRow {
+  /** Knockout: true once this car has been dropped. */
+  out?: boolean;
   name: string;
   color: number;
   isPlayer: boolean;
@@ -146,6 +163,8 @@ export interface CarResult {
   isPlayer: boolean;
   bestLap: number | null;
   provisional: boolean;
+  /** Knockout: true if this car was eliminated rather than classified on time. */
+  out?: boolean;
 }
 
 export interface StandingRow {
@@ -247,6 +266,7 @@ export const defaultSettings: Settings = {
   keyBinds: { ...DEFAULT_KEYBINDS },
   weather: "clear",
   rivals: 3,
+  tyreCompound: "medium",
 };
 
 export const defaultGarage: Garage = {
@@ -291,12 +311,21 @@ function loadSettings(): Settings {
     merged.fovOffset = Math.min(Math.max(-12, merged.fovOffset || 0), 18);
     merged.wildcardSeed = Math.max(1, Math.floor(merged.wildcardSeed || 1));
     if (!["sunset", "noon", "night"].includes(merged.timeOfDay)) merged.timeOfDay = base.timeOfDay;
-    if (!["race", "timetrial", "championship"].includes(merged.mode)) merged.mode = base.mode;
+    if (!["race", "timetrial", "championship", "knockout"].includes(merged.mode)) {
+      merged.mode = base.mode;
+    }
     merged.keyBinds = normaliseBinds(merged.keyBinds);
-    if (merged.weather !== "random" && !WEATHER_ORDER.includes(merged.weather as WeatherId)) {
+    if (
+      merged.weather !== "random" &&
+      merged.weather !== "changeable" &&
+      !WEATHER_ORDER.includes(merged.weather as WeatherId)
+    ) {
       merged.weather = base.weather;
     }
     merged.rivals = Math.min(Math.max(1, Math.round(merged.rivals) || base.rivals), MAX_RIVALS);
+    if (!TYRE_COMPOUNDS.some((c) => c.id === merged.tyreCompound)) {
+      merged.tyreCompound = base.tyreCompound;
+    }
     return merged;
   } catch {
     return base;
@@ -447,10 +476,16 @@ export const defaultHud: HudData = {
   launchRating: null,
   conditions: "",
   lowGrip: false,
+  tyreWear: 0,
+  tyreTemp: 0.14,
+  tyreGrip: 1,
   rivalAhead: null,
   rivalBehind: null,
   battle: false,
   order: [],
+  knockoutIn: null,
+  atRisk: null,
+  survivors: 0,
 };
 
 // ---------------------------------------------------------------- store

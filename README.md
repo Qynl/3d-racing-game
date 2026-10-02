@@ -2,8 +2,9 @@
 
 A 3D desert rally game that runs entirely in the browser. Procedural terrain, four seeded
 circuits plus an infinite Wildcard generator, three car classes with a credits-and-upgrades
-garage, dynamic weather, grids of up to eight cars driven by seven named AI rivals with
-their own personalities, a four-round championship, drift-charged boost,
+garage, weather that can turn mid-race, tyre compounds that heat up and wear out, grids of
+up to eight cars driven by seven named AI rivals with their own personalities, a knockout
+mode where last place is eliminated on a timer, a four-round championship, drift-charged boost,
 slipstreaming, launch control, damage, ghost cars and a full sector-timing system — built with React 19, Vite 7, Tailwind 4 and three.js. No game
 engine, no downloaded assets: every mesh, texture and sound is generated at runtime.
 
@@ -93,6 +94,8 @@ so menus stay fully keyboard-navigable.
 ### Modes
 
 - **Race** — 1 to 7 AI rivals, 1 to 7 laps, three difficulty tiers (Rookie / Pro / Legend).
+- **Knockout** — no lap limit. Thirty seconds in, and every twenty-two seconds after that,
+  whoever is last on the road is eliminated. Survive to be the last car running.
 - **Time trial** — you, the clock, and your own ghost replaying your best lap.
 - **Season** — a four-round championship over every circuit, alternating direction each round,
   scoring 10 / 8 / 6 / 5 / 4 / 3 / 2 / 1. Standings are persisted, so you can finish the season tomorrow, and
@@ -128,6 +131,16 @@ They attack on the side with room, defend the inside, use the tow, make mistakes
 from them, push harder on the last lap, and get called out on the HUD when they run wide.
 A live timing tower shows the running order and gaps. When the player finishes, rivals still
 on track get their finish time extrapolated instead of a bogus DNF.
+
+**Tyres** · Three compounds (soft / medium / hard) trading grip against durability. Rubber
+starts cold and slithery, comes into a working window, overheats if you abuse it, and wears
+out over a race — a destroyed set costs about a fifth of its grip and a couple of seconds a
+lap. Softs are a second a lap quicker early and gone by the end; hards are the other way
+round. Rivals pick their own compound according to temperament and race length.
+
+**Weather** · Fixed, rolled per race, or **Changeable** — a front moves through every 45-75
+seconds, the sky and precipitation switch immediately and grip ramps across ten seconds, so
+a dry line turns greasy while you are driving on it.
 
 **Timing** · Three sectors per lap, live delta, per-sector personal bests, lap records and race
 records keyed by track + mode + difficulty + lap count + car class, all persisted.
@@ -199,7 +212,7 @@ why it can be unit-tested in a plain Node environment.
 | `npm run typecheck`  | `tsc --noEmit`                                     |
 | `npm run lint`       | ESLint flat config (TS + react-hooks)              |
 | `npm run format`     | Prettier write (`format:check` in CI)              |
-| `npm test`           | Vitest (180 tests)                                 |
+| `npm test`           | Vitest (195 tests)                                 |
 | `npm run check`      | typecheck + lint + test                            |
 
 ## Testing

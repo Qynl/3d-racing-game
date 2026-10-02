@@ -53,6 +53,15 @@ describe("race payouts", () => {
     expect(champ.total).toBeGreaterThan(computePayout(base).total);
   });
 
+  it("pays knockout by how long you survived", () => {
+    const winner = computePayout({ ...base, mode: "knockout", carCount: 8, position: 1 });
+    const firstOut = computePayout({ ...base, mode: "knockout", carCount: 8, position: 8 });
+    expect(winner.total).toBeGreaterThan(firstOut.total);
+    expect(winner.lines.some((l) => l.label === "Last car standing")).toBe(true);
+    expect(firstOut.lines.some((l) => l.label === "Last car standing")).toBe(false);
+    expect(firstOut.total).toBeGreaterThan(0);
+  });
+
   it("never returns a negative or fractional total", () => {
     const out = computePayout({ ...base, position: 9, laps: 0, cleanRace: false });
     expect(out.total).toBeGreaterThan(0);
