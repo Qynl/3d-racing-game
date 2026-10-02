@@ -31,6 +31,8 @@ export interface PayoutInput {
   seasonFinished?: boolean;
   /** Won the championship outright. */
   seasonWon?: boolean;
+  /** Extra itemised lines, e.g. completed race objectives. */
+  extras?: { label: string; amount: number }[];
 }
 
 const POSITION_PAY = [900, 560, 340, 200];
@@ -66,6 +68,7 @@ export function computePayout(input: PayoutInput): CreditSummary {
   if (input.newRaceRecord) add("New race record", 300);
   if (input.seasonFinished) add("Season completed", 600);
   if (input.seasonWon) add("Championship won", 1500);
+  for (const e of input.extras ?? []) add(e.label, e.amount);
 
   const subtotal = lines.reduce((sum, l) => sum + l.amount, 0);
 

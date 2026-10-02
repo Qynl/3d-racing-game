@@ -32,6 +32,7 @@ import {
   raceKey,
   useGameStore,
 } from "../game/store";
+import { objectivesFor } from "../game/objectives";
 import { cn } from "../utils/cn";
 import { Bar, Kbd, Label, Segmented, Slider, Toggle } from "./ui";
 
@@ -478,6 +479,32 @@ export default function Menu() {
                     value={settings.weather}
                     onChange={(weather) => apply({ weather })}
                   />
+                </div>
+                <div>
+                  <Label>Objectives</Label>
+                  <div className="flex flex-col gap-1.5">
+                    {objectivesFor({
+                      trackId: settings.trackId,
+                      mode: settings.mode,
+                      laps: settings.laps,
+                      difficulty: settings.difficulty,
+                      rivals: settings.mode === "timetrial" ? 0 : settings.rivals,
+                    }).map((o) => (
+                      <div
+                        key={o.id}
+                        className="flex items-center gap-2 rounded-lg border border-cream/10 bg-ink/40 px-2.5 py-1.5 text-[12px]"
+                      >
+                        <span aria-hidden className="text-sand">
+                          ◆
+                        </span>
+                        <span className="flex-1 text-cream/80">{o.label}</span>
+                        <span className="font-display tabular-nums text-sand">+{o.reward} cr</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-1 text-[10px] uppercase tracking-[0.15em] text-cream/40">
+                    Fixed for this setup — retry until you clear them.
+                  </div>
                 </div>
                 <div className={cn(settings.mode === "knockout" && "hidden")}>
                   <Label>Laps</Label>

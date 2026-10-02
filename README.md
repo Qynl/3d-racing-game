@@ -2,7 +2,8 @@
 
 A 3D desert rally game that runs entirely in the browser. Procedural terrain, four seeded
 circuits plus an infinite Wildcard generator, three car classes with a credits-and-upgrades
-garage, weather that can turn mid-race, tyre compounds that heat up and wear out, grids of
+garage, full race replays with broadcast cameras, per-race objectives, weather that can turn
+mid-race, tyre compounds that heat up and wear out, grids of
 up to eight cars driven by seven named AI rivals with their own personalities, a knockout
 mode where last place is eliminated on a timer, a four-round championship, drift-charged boost,
 slipstreaming, launch control, damage, ghost cars and a full sector-timing system — built with React 19, Vite 7, Tailwind 4 and three.js. No game
@@ -142,6 +143,17 @@ round. Rivals pick their own compound according to temperament and race length.
 seconds, the sky and precipitation switch immediately and grip ramps across ten seconds, so
 a dry line turns greasy while you are driving on it.
 
+**Replays** · Every race is recorded — all cars, 20 Hz, interpolated on playback — and can be
+reviewed from the results screen with four broadcast cameras (trackside posts that cut as the
+car goes past, chase, helicopter, cockpit), scrubbing, 0.25×–2× speed and car-by-car
+following. Playback opens at the busiest moment of the race, which is usually the one worth
+watching. Space plays, arrows scrub, C cuts the camera, Tab follows the next car.
+
+**Objectives** · Three goals per race configuration — win, podium, places gained, drift score,
+air time, top speed, a clean race, tyre or damage limits, eliminations survived — each worth
+credits, shown in the menu before you start and ticked off on the results screen. They are
+seeded from the setup, so the goal you just missed is still there when you hit "Race again".
+
 **Timing** · Three sectors per lap, live delta, per-sector personal bests, lap records and race
 records keyed by track + mode + difficulty + lap count + car class, all persisted.
 
@@ -212,7 +224,7 @@ why it can be unit-tested in a plain Node environment.
 | `npm run typecheck`  | `tsc --noEmit`                                     |
 | `npm run lint`       | ESLint flat config (TS + react-hooks)              |
 | `npm run format`     | Prettier write (`format:check` in CI)              |
-| `npm test`           | Vitest (195 tests)                                 |
+| `npm test`           | Vitest (218 tests)                                 |
 | `npm run check`      | typecheck + lint + test                            |
 
 ## Testing

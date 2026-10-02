@@ -2,10 +2,11 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import App from "../App";
-import { defaultHud, defaultSettings, useGameStore } from "../game/store";
+import { defaultHud, defaultReplay, defaultSettings, useGameStore } from "../game/store";
 import HUD from "./HUD";
 import Menu from "./Menu";
 import PauseOverlay from "./PauseOverlay";
+import ReplayOverlay from "./ReplayOverlay";
 import Results from "./Results";
 import Toasts from "./Toasts";
 
@@ -17,6 +18,7 @@ function reset(patch: Partial<ReturnType<typeof useGameStore.getState>> = {}) {
     results: null,
     records: {},
     toasts: [],
+    replay: { ...defaultReplay },
     fatal: null,
     loaded: true,
     loadProgress: 1,
@@ -85,6 +87,7 @@ describe("screens render without crashing", () => {
         position: 2,
         credits: { total: 1240, lines: [{ label: "Finished P2", amount: 560 }] },
         weather: "rain",
+      objectives: [],
         standings: [
           { name: "ATLAS", points: 16, isPlayer: false, color: 0x4f6b4a, gained: 10 },
           { name: "YOU", points: 12, isPlayer: true, color: 0xc2553a, gained: 6 },
@@ -137,6 +140,7 @@ describe("screens render without crashing", () => {
           ],
         },
         weather: "rain",
+      objectives: [],
         standings: null,
         seasonRace: null,
         seasonDone: false,
@@ -169,6 +173,7 @@ describe("screens render without crashing", () => {
         position: 1,
         credits: null,
         weather: "clear",
+      objectives: [],
         standings: null,
         seasonRace: null,
         seasonDone: false,
@@ -313,6 +318,79 @@ describe("screens render without crashing", () => {
     fireEvent.click(screen.getByRole("button", { name: /garage/i }));
     fireEvent.click(screen.getByRole("radio", { name: /soft/i }));
     expect(useGameStore.getState().settings.tyreCompound).toBe("soft");
+  });
+
+  it("lists the race objectives before you start", () => {
+    reset();
+    render(<Menu />);
+    expect(screen.getByText(/objectives/i)).toBeTruthy();
+    expect(screen.getAllByText(/\+\d+ cr/).length).toBe(3);
+  });
+
+  it("shows which objectives were met on the results screen", () => {
+    reset({
+      screen: "finished",
+      results: {
+        position: 2,
+        credits: { total: 900, lines: [{ label: "Finished P2", amount: 900 }] },
+        objectives: [
+          { id: "win-1", label: "Win the race", reward: 400, met: false },
+          { id: "clean-1", label: "Keep every lap clean", reward: 230, met: true },
+        ],
+        weather: "clear",
+        standings: null,
+        seasonRace: null,
+        seasonDone: false,
+        totalTime: 142.5,
+        lapTimes: [71, 71.5],
+        bestLap: 71,
+        isRecordLap: false,
+        isRecordRace: false,
+        bestSectors: [null, null, null],
+        cars: [],
+        topSpeed: 210,
+        driftScore: 900,
+        airTime: 2,
+        cleanRace: true,
+        mode: "race",
+        trackId: "sundown",
+      },
+    });
+    const { container } = render(<Results />);
+    const text = container.textContent ?? "";
+    expect(text).toContain("Keep every lap clean");
+    expect(text).toContain("+230 cr");
+  });
+
+  it("renders the replay director with its controls", () => {
+    reset({
+      screen: "replay",
+      replay: {
+        active: true,
+        playing: true,
+        time: 12.5,
+        duration: 90,
+        speed: 1,
+        camera: "trackside",
+        focus: 1,
+        cars: [
+          { name: "ATLAS", color: 0x4f6b4a, isPlayer: false },
+          { name: "YOU", color: 0x8899aa, isPlayer: true },
+        ],
+      },
+    });
+    render(<ReplayOverlay />);
+    expect(screen.getByRole("slider", { name: /replay position/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /pause replay/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /follow atlas/i })).toBeTruthy();
+    expect(document.body.textContent).toContain("Trackside");
+    expect(document.body.textContent).toContain("YOU");
+  });
+
+  it("hides the replay director when no replay is playing", () => {
+    reset({ screen: "finished" });
+    const { container } = render(<ReplayOverlay />);
+    expect(container.textContent).toBe("");
   });
 
   it("renders a fatal error screen instead of the game", () => {

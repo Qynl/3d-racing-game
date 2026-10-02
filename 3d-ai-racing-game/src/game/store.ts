@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { CreditSummary } from "./economy";
+import type { ObjectiveResult } from "./objectives";
 import { WEATHER_ORDER, type WeatherId } from "./sky";
 import {
   CAR_CLASSES,
@@ -19,7 +20,7 @@ import {
   guessQuality,
 } from "./config";
 
-export type Screen = "menu" | "countdown" | "racing" | "paused" | "finished";
+export type Screen = "menu" | "countdown" | "racing" | "paused" | "finished" | "replay";
 export type Difficulty = "rookie" | "pro" | "legend";
 export type RaceMode = "race" | "timetrial" | "championship" | "knockout";
 export type TimeOfDay = "sunset" | "noon" | "night";
@@ -156,6 +157,34 @@ export interface RunningOrderRow {
   finished: boolean;
 }
 
+/** Replay playback state, owned by the store so the overlay can drive it. */
+export type ReplayCamera = "trackside" | "chase" | "heli" | "cockpit";
+
+export interface ReplayState {
+  active: boolean;
+  playing: boolean;
+  /** Seconds into the race. */
+  time: number;
+  duration: number;
+  /** Playback rate; 1 is real time. */
+  speed: number;
+  camera: ReplayCamera;
+  /** Index of the car the director is following. */
+  focus: number;
+  cars: { name: string; color: number; isPlayer: boolean }[];
+}
+
+export const defaultReplay: ReplayState = {
+  active: false,
+  playing: false,
+  time: 0,
+  duration: 0,
+  speed: 1,
+  camera: "trackside",
+  focus: 0,
+  cars: [],
+};
+
 export interface CarResult {
   name: string;
   color: number;
@@ -208,6 +237,8 @@ export interface RaceResults {
   standings: StandingRow[] | null;
   /** Credits earned, itemised. */
   credits: CreditSummary | null;
+  /** Race objectives and whether they were met. */
+  objectives: ObjectiveResult[];
   /** Weather the race was run in. */
   weather: WeatherId;
   /** 1-based race number and total, for championship results. */
@@ -505,6 +536,8 @@ interface GameStore {
   setScreen: (s: Screen) => void;
   setSettings: (patch: Partial<Settings>) => void;
   setHud: (patch: Partial<HudData>) => void;
+  replay: ReplayState;
+  setReplay: (patch: Partial<ReplayState>) => void;
   setResults: (r: RaceResults | null) => void;
   setLoaded: (v: boolean) => void;
   setProgress: (p: number, label: string) => void;
@@ -562,6 +595,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       return { settings };
     }),
   setHud: (patch) => set((s) => ({ hud: { ...s.hud, ...patch } })),
+  replay: { ...defaultReplay },
+  setReplay: (patch) => set((s) => ({ replay: { ...s.replay, ...patch } })),
   setResults: (results) => set({ results }),
   setLoaded: (loaded) => set({ loaded }),
   setProgress: (loadProgress, loadLabel) => set({ loadProgress, loadLabel }),

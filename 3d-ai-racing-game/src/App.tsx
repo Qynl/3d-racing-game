@@ -3,6 +3,7 @@ import GameCanvas from "./components/GameCanvas";
 import HUD from "./components/HUD";
 import Menu from "./components/Menu";
 import PauseOverlay from "./components/PauseOverlay";
+import ReplayOverlay from "./components/ReplayOverlay";
 import Results from "./components/Results";
 import TouchControls from "./components/TouchControls";
 import { useGameStore } from "./game/store";
@@ -82,6 +83,7 @@ export default function App() {
       {!fatal && IS_TOUCH && (screen === "racing" || screen === "countdown") && <TouchControls />}
       {!fatal && screen === "paused" && <PauseOverlay />}
       {!fatal && screen === "finished" && <Results />}
+      {!fatal && screen === "replay" && <ReplayOverlay />}
       {(!loaded || !hideLoader) && !fatal && (
         <div
           className={`transition-opacity duration-500 ${loaded ? "pointer-events-none opacity-0" : "opacity-100"}`}

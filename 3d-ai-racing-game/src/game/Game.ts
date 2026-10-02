@@ -13,6 +13,7 @@ import {
   CarVisual,
   MAX_SPEED,
   NEUTRAL_INPUT,
+  WHEEL_RADIUS,
   buildCarVisual,
   disposeCarVisual,
   tuningFromClass,
@@ -70,6 +71,15 @@ import {
 import { Terrain, WORLD_RADIUS } from "./terrain";
 import { ColliderGrid } from "./collision";
 import { computeRacingLine, type RacingLine } from "./racingline";
+import { evaluateObjectives, objectivesFor, type RaceOutcome } from "./objectives";
+import {
+  type Replay,
+  ReplayRecorder,
+  busiestMoment,
+  makePose,
+  sampleReplay,
+  type ReplayPose,
+} from "./replay";
 import type { MinimapBounds, MinimapScene } from "./minimap";
 import { computeMinimapBounds, drawMinimap } from "./minimap";
 import {
@@ -906,6 +916,11 @@ export class Game {
     this.knockoutTimer = knockout ? KNOCKOUT_FIRST : 0;
     this.knockoutWarned = false;
     this.weatherTimer = settings.weather === "changeable" ? 40 + Math.random() * 25 : 0;
+    this.replay = null;
+    this.overtakes = 0;
+    this.replayRec.reset(
+      this.cars.map((c) => ({ name: c.name, color: c.color, isPlayer: c === this.player })),
+    );
     this.gripNow = this.weather.grip;
     this.cameraMode = settings.cameraMode;
     this.quality = QUALITY_PRESETS[settings.quality] ?? this.quality;
@@ -966,7 +981,7 @@ export class Game {
     this.audio.setMusicIntensity(0.1);
   }
 
-  private pausedFrom: Screen = "racing";
+  private pausedFrom: "racing" | "countdown" = "racing";
   /** Throttles rival incident callouts. */
   private incidentCooldown = 0;
   /** Knockout: seconds until the next car is dropped. */
@@ -979,6 +994,20 @@ export class Game {
   private weatherTimer = 0;
   /** Grip actually applied to the cars, ramped when the weather turns. */
   private gripNow = 1;
+  /** Net places gained on track, for race objectives. */
+  private overtakes = 0;
+
+  // ---- replay
+  private replayRec = new ReplayRecorder();
+  /** The last completed race, available from the results screen. */
+  replay: Replay | null = null;
+  private replayPose: ReplayPose = makePose();
+  private replayPose2: ReplayPose = makePose();
+  private replayTime = 0;
+  private replayPublish = 0;
+  private replayPostIndex = -1;
+  private replayPostPos = new THREE.Vector3();
+  private stateBeforeReplay: Screen = "finished";
 
   resume() {
     if (this.state !== "paused") return;
@@ -1008,6 +1037,186 @@ export class Game {
     this.audio.silenceEngines();
     this.audio.setMusicIntensity(0.2);
     if (this.ghostVisual) this.ghostVisual.root.visible = false;
+  }
+
+  /** One replay frame of every car, if the recorder wants one. */
+  private recordReplayFrame(dt: number) {
+    this.replayRec.sample(
+      dt,
+      this.cars.map((e) => ({
+        pos: e.physics.pos,
+        yaw: e.physics.yaw,
+        roll: e.physics.roll,
+        speed: e.physics.speedF,
+        alive: !e.knockedOutAt,
+      })),
+    );
+  }
+
+  // ---------------------------------------------------------------- replay
+
+  /**
+   * Enters replay mode.
+   *
+   * The simulation is frozen: car visuals are driven straight from the
+   * recording, so scrubbing backwards is as cheap as scrubbing forwards. The
+   * clock starts at the busiest moment of the race — the closest the field ever
+   * got — because that is almost always the bit worth watching.
+   */
+  startReplay() {
+    if (!this.replay) return;
+    this.stateBeforeReplay = this.state === "finished" ? "finished" : "menu";
+    this.state = "replay";
+    this.input.captureKeys = false;
+    this.audio.silenceEngines();
+    this.audio.setMusicIntensity(0.3);
+    const store = useGameStore.getState();
+    const start = Math.max(0, busiestMoment(this.replay) - 4);
+    this.replayTime = start;
+    this.replayPostIndex = -1;
+    store.setScreen("replay");
+    store.setReplay({
+      active: true,
+      playing: true,
+      time: start,
+      duration: this.replay.duration,
+      speed: 1,
+      camera: "trackside",
+      focus: Math.max(
+        0,
+        this.replay.cars.findIndex((c) => c.isPlayer),
+      ),
+      cars: this.replay.cars.map((c) => ({ name: c.name, color: c.color, isPlayer: c.isPlayer })),
+    });
+    if (this.ghostVisual) this.ghostVisual.root.visible = false;
+    this.applyReplayFrame(0);
+  }
+
+  /** Leaves replay and puts the results screen back up. */
+  stopReplay() {
+    if (this.state !== "replay") return;
+    const store = useGameStore.getState();
+    store.setReplay({ active: false, playing: false });
+    if (this.stateBeforeReplay === "finished") {
+      this.state = "finished";
+      store.setScreen("finished");
+    } else {
+      this.quitToMenu();
+    }
+  }
+
+  seekReplay(t: number) {
+    if (!this.replay) return;
+    this.replayTime = clamp(t, 0, this.replay.duration);
+    this.replayPostIndex = -1;
+    useGameStore.getState().setReplay({ time: this.replayTime });
+    this.applyReplayFrame(0);
+  }
+
+  /** Moves playback on and poses every car from the recording. */
+  private updateReplay(dt: number) {
+    const replay = this.replay;
+    if (!replay) return;
+    const r = useGameStore.getState().replay;
+    if (r.playing) {
+      this.replayTime += dt * r.speed;
+      if (this.replayTime >= replay.duration) {
+        this.replayTime = replay.duration;
+        useGameStore.getState().setReplay({ playing: false, time: this.replayTime });
+      }
+    }
+    this.applyReplayFrame(dt);
+
+    // Publishing the clock at full frame rate would re-render the overlay 60
+    // times a second for no visible benefit.
+    this.replayPublish += dt;
+    if (this.replayPublish > 0.1) {
+      this.replayPublish = 0;
+      useGameStore.getState().setReplay({ time: this.replayTime });
+    }
+  }
+
+  private applyReplayFrame(dt: number) {
+    const replay = this.replay;
+    if (!replay) return;
+    const r = useGameStore.getState().replay;
+    const focus = Math.min(replay.carCount - 1, Math.max(0, r.focus));
+    for (let i = 0; i < replay.carCount && i < this.cars.length; i++) {
+      const e = this.cars[i];
+      const pose = sampleReplay(replay, this.replayTime, i, this.replayPose);
+      e.visual.root.visible = pose.alive;
+      if (e.tag) e.tag.visible = false;
+      if (!pose.alive) continue;
+      e.visual.root.position.copy(pose.pos);
+      e.visual.root.rotation.set(0, pose.yaw, 0);
+      e.visual.body.rotation.set(0, 0, pose.roll);
+      // Spin the wheels at the speed the car was actually doing.
+      const spin = (pose.speed / WHEEL_RADIUS) * (1 / 60);
+      for (const w of e.visual.wheels) w.rotation.x -= spin;
+    }
+    const target = sampleReplay(replay, this.replayTime, focus, this.replayPose2);
+    this.updateReplayCamera(target, r.camera, dt);
+    this.updateSun(target.pos);
+    this.camera.updateMatrixWorld();
+    this.updateListener();
+  }
+
+  /**
+   * Broadcast cameras.
+   *
+   * `trackside` is the interesting one: posts are placed every ~90 m just
+   * outside the kerb, and the director cuts to the next one as the car goes
+   * past, which is what makes a replay read like television rather than a
+   * chase cam with extra steps.
+   */
+  private updateReplayCamera(pose: ReplayPose, mode: string, dt: number) {
+    const cam = this.camera;
+    const look = this.tmpV3.copy(pose.pos);
+    const fwdX = Math.sin(pose.yaw);
+    const fwdZ = Math.cos(pose.yaw);
+    const k = 1 - Math.exp(-6 * Math.max(dt, 1 / 240));
+
+    if (mode === "chase") {
+      const want = this.tmpV.set(
+        pose.pos.x - fwdX * 9.5,
+        pose.pos.y + 3.6,
+        pose.pos.z - fwdZ * 9.5,
+      );
+      cam.position.lerp(want, k);
+      look.set(pose.pos.x + fwdX * 10, pose.pos.y + 1.1, pose.pos.z + fwdZ * 10);
+    } else if (mode === "heli") {
+      const orbit = this.time * 0.25;
+      const want = this.tmpV.set(
+        pose.pos.x + Math.sin(orbit) * 26,
+        pose.pos.y + 20,
+        pose.pos.z + Math.cos(orbit) * 26,
+      );
+      cam.position.lerp(want, 1 - Math.exp(-1.6 * Math.max(dt, 1 / 240)));
+      look.y += 0.6;
+    } else if (mode === "cockpit") {
+      cam.position.set(pose.pos.x + fwdX * 0.6, pose.pos.y + 1.55, pose.pos.z + fwdZ * 0.6);
+      look.set(pose.pos.x + fwdX * 24, pose.pos.y + 1.6, pose.pos.z + fwdZ * 24);
+    } else {
+      // trackside: cut between fixed posts around the lap
+      const idx = this.track.nearest(pose.pos.x, pose.pos.z, 1e9).index;
+      const spacingPosts = Math.max(1, Math.round(90 / this.track.spacing));
+      const post = Math.round(idx / spacingPosts) % Math.max(1, Math.ceil(this.track.count / spacingPosts));
+      if (post !== this.replayPostIndex) {
+        this.replayPostIndex = post;
+        const pIdx = (post * spacingPosts) % this.track.count;
+        const side = post % 2 === 0 ? 1 : -1;
+        this.track.offsetPoint(pIdx, side * (this.track.halfWidth + 11), this.replayPostPos);
+        this.replayPostPos.y = this.terrain.getHeight(this.replayPostPos.x, this.replayPostPos.z) + 5.5;
+        cam.position.copy(this.replayPostPos);
+      }
+      cam.position.lerp(this.replayPostPos, 1 - Math.exp(-2 * Math.max(dt, 1 / 240)));
+      look.y += 0.5;
+    }
+    cam.lookAt(look);
+    const targetFov = mode === "cockpit" ? 74 : mode === "trackside" ? 46 : 62;
+    this.fov = lerp(this.fov, targetFov + this.settings.fovOffset, 1 - Math.exp(-4 * Math.max(dt, 1 / 240)));
+    cam.fov = this.fov;
+    cam.updateProjectionMatrix();
   }
 
   /** Rebuilds the cars so new garage upgrades take effect immediately. */
@@ -1169,6 +1378,10 @@ export class Game {
       this.updateListener();
       return;
     }
+    if (this.state === "replay") {
+      this.updateReplay(dt);
+      return;
+    }
     if (this.state === "paused") return;
 
     if (this.state === "countdown") {
@@ -1197,6 +1410,7 @@ export class Game {
         true,
       );
       this.audio.updateAmbience(0, 0, false, true);
+      this.recordReplayFrame(dt);
       this.hudAcc += dt;
       if (this.hudAcc > 0.06) {
         this.hudAcc = 0;
@@ -1270,6 +1484,8 @@ export class Game {
     }
     const pace = clamp(Math.abs(p.speedF) / 45, 0, 1);
     this.audio.setMusicIntensity(0.45 + pace * 0.55);
+
+    this.recordReplayFrame(dt);
 
     this.hudAcc += dt;
     if (this.hudAcc > 0.06) {
@@ -1678,6 +1894,7 @@ export class Game {
       if (this.lastPosition && pos !== this.lastPosition && this.raceTime > 1) {
         const store = useGameStore.getState();
         if (pos < this.lastPosition) {
+          this.overtakes += this.lastPosition - pos;
           store.pushToast({
             text: `P${pos}`,
             sub: pos === 1 ? "You're leading" : "Overtake",
@@ -1849,6 +2066,7 @@ export class Game {
   }
 
   private publishResults() {
+    this.replay = this.replayRec.finish();
     const player = this.player!;
     const order = this.ranking();
     const position = order.indexOf(player) + 1;
@@ -1888,6 +2106,29 @@ export class Game {
     }
 
     const seasonWon = seasonDone && standings.length > 0 && standings[0].isPlayer;
+
+    // ---- race objectives
+    const objectiveList = objectivesFor({
+      trackId: this.settings.trackId,
+      mode: this.settings.mode,
+      laps: this.settings.laps,
+      difficulty: this.settings.difficulty,
+      rivals: this.settings.mode === "timetrial" ? 0 : this.settings.rivals,
+    });
+    const outcome: RaceOutcome = {
+      position,
+      carCount: this.cars.length,
+      lapsCompleted: player.lapTimes.length,
+      overtakes: this.overtakes,
+      driftScore: player.physics.driftScore,
+      airTime: player.physics.totalAirTime,
+      topSpeedKmh: player.physics.topSpeedSeen * 3.6,
+      cleanRace: player.lapValid && player.lapTimes.length >= Math.min(this.totalLaps, 1),
+      tyreWear: player.physics.tyreWear,
+      damage: player.physics.damage,
+      survived: this.knockoutRound,
+    };
+    const objectives = evaluateObjectives(objectiveList, outcome);
     const credits = computePayout({
       mode: this.settings.mode,
       position,
@@ -1902,6 +2143,7 @@ export class Game {
       newRaceRecord: beaten.race,
       seasonFinished: seasonDone,
       seasonWon,
+      extras: objectives.filter((o) => o.met).map((o) => ({ label: o.label, amount: o.reward })),
     });
 
     const results: RaceResults = {
@@ -1910,6 +2152,7 @@ export class Game {
       seasonRace,
       seasonDone,
       credits,
+      objectives,
       weather: this.weather.id,
       totalTime: total,
       lapTimes: [...player.lapTimes],

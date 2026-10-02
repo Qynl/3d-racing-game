@@ -311,3 +311,27 @@ next. This pass adds race-long state that the player has to manage.
 Tests: **195**, adding the tyre physics (warm-up, cold-grip loss, wear over distance, sliding
 cost, compound trade-offs, upgrade durability), knockout payouts, mode/weather validation and
 the new HUD and menu states.
+
+## §10 Replays and objectives (fifth depth pass)
+
+- ✅ **Replay system** (`replay.ts`). Every car's pose is sampled at 20 Hz into one flat
+  `Float32Array` — constant-time seeking, no per-frame allocation, a five-minute eight-car
+  race in roughly two megabytes — and interpolated on playback, taking the short way round
+  the yaw seam. Eliminated cars stay switched off rather than fading back in.
+- ✅ **Broadcast direction.** Four cameras: trackside posts placed every ~90 m just outside the
+  kerb that cut as the car goes past, chase, orbiting helicopter and cockpit, each with its
+  own field of view. Playback opens at `busiestMoment()` — the frame where the field was
+  closest together — minus four seconds.
+- ✅ **Director UI** with play/pause, a scrub bar, 0.25×–2× speed, camera and car selection,
+  and keyboard shortcuts (space, arrows, C, Tab, Esc). The simulation is frozen during
+  playback, so scrubbing backwards costs exactly as much as scrubbing forwards.
+- ✅ **Race objectives** (`objectives.ts`). Three goals per configuration, drawn from a pool of
+  eleven kinds and seeded from track + mode + laps + difficulty + field size, so they are
+  stable across retries. Rewards scale with difficulty, are itemised into the payout, shown
+  in the menu before the race and ticked off on the results screen.
+- ✅ **Net overtakes** are now tracked during a race, which both the objectives and the results
+  screen can use.
+
+Tests: **218**, adding the replay recorder/sampler (rate, growth, interpolation, seam
+handling, memory budget, busiest-moment detection), objective generation and evaluation, and
+the replay director and objective UI.

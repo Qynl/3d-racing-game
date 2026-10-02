@@ -53,7 +53,39 @@ export default function Results() {
               {track.name} · {timeTrial ? "Time trial" : knockout ? "Knockout" : settings.difficulty} ·{" "}
               {knockout ? `${results.cars.length} cars` : `${settings.laps} laps`} · {weather.name}
             </div>
-            {!timeTrial && (
+            {results.objectives.length > 0 && (
+          <div className="mt-4 rounded-xl border border-cream/10 p-3">
+            <div className="mb-2 text-[9px] uppercase tracking-[0.25em] text-cream/50">Objectives</div>
+            <div className="flex flex-col gap-1.5">
+              {results.objectives.map((o) => (
+                <div key={o.id} className="flex items-center gap-2 text-sm">
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[10px]",
+                      o.met
+                        ? "border-juniper-bright bg-juniper/25 text-juniper-bright"
+                        : "border-cream/25 text-cream/30",
+                    )}
+                  >
+                    {o.met ? "✓" : "·"}
+                  </span>
+                  <span className={cn("flex-1", o.met ? "text-cream" : "text-cream/45")}>{o.label}</span>
+                  <span
+                    className={cn(
+                      "font-display text-sm tabular-nums",
+                      o.met ? "text-sand" : "text-cream/30",
+                    )}
+                  >
+                    +{o.reward} cr
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {!timeTrial && (
               <div className="mt-2 flex items-end gap-2">
                 <div className="font-display text-[72px] font-extrabold leading-[0.8] text-cream md:text-[110px]">
                   {results.position}
@@ -274,6 +306,13 @@ export default function Results() {
             className="btn-primary flex-1 rounded-xl px-5 py-3 font-display text-xl font-extrabold uppercase tracking-wider"
           >
             {results.seasonRace ? "Replay round" : "Race again"}
+          </button>
+          <button
+            disabled={!gameHolder.game?.replay}
+            onClick={() => gameHolder.game?.startReplay()}
+            className="btn-ghost flex-1 rounded-xl px-5 py-3 font-display text-xl font-bold uppercase tracking-wider disabled:opacity-40"
+          >
+            Watch replay
           </button>
           <button
             onClick={() => gameHolder.game?.quitToMenu()}
