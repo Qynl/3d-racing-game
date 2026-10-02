@@ -1,0 +1,210 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Barlow Condensed", "Arial Narrow", "Helvetica Neue", sans-serif;
+  --font-body: "Barlow", "Helvetica Neue", Arial, sans-serif;
+  --color-cream: #f3ead9;
+  --color-bone: #e9e2d2;
+  --color-sand: #d8b07c;
+  --color-clay: #c2553a;
+  --color-clay-deep: #9a3f2a;
+  --color-ink: #1d1a17;
+  --color-ink-soft: #2a2522;
+  --color-smoke: #7a6f66;
+  --color-juniper: #4f6b4a;
+  --color-ochre: #d1a03c;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #1d1a17;
+  font-family: var(--font-body);
+  color: var(--color-cream);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+
+canvas.game-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  outline: none;
+}
+
+.vignette {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 55%, rgba(30, 18, 10, 0.45) 100%);
+}
+
+.panel {
+  background: linear-gradient(160deg, rgba(40, 30, 24, 0.82), rgba(24, 18, 14, 0.9));
+  border: 1px solid rgba(243, 234, 217, 0.14);
+  box-shadow:
+    0 30px 80px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.hud-chip {
+  background: linear-gradient(160deg, rgba(30, 22, 18, 0.7), rgba(20, 14, 10, 0.78));
+  border: 1px solid rgba(243, 234, 217, 0.12);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+
+.btn-primary {
+  position: relative;
+  background: linear-gradient(180deg, #d0634a, #b54a33);
+  color: #fff6ea;
+  border: 1px solid rgba(255, 220, 190, 0.35);
+  box-shadow:
+    0 10px 30px rgba(194, 85, 58, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+}
+.btn-primary:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.06);
+  box-shadow:
+    0 14px 36px rgba(194, 85, 58, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+.btn-primary:active {
+  transform: translateY(1px);
+}
+
+.btn-ghost {
+  background: rgba(243, 234, 217, 0.06);
+  border: 1px solid rgba(243, 234, 217, 0.18);
+  color: var(--color-cream);
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.btn-ghost:hover {
+  background: rgba(243, 234, 217, 0.12);
+  transform: translateY(-1px);
+}
+
+.seg {
+  border: 1px solid rgba(243, 234, 217, 0.16);
+  background: rgba(243, 234, 217, 0.04);
+  color: rgba(243, 234, 217, 0.72);
+  transition: all 0.15s ease;
+}
+.seg:hover {
+  background: rgba(243, 234, 217, 0.1);
+}
+.seg.active {
+  background: rgba(216, 176, 124, 0.18);
+  border-color: rgba(216, 176, 124, 0.7);
+  color: #f7efe0;
+}
+
+@keyframes pop-in {
+  0% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+  35% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  80% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.85);
+    opacity: 0;
+  }
+}
+.countdown-num {
+  animation: pop-in 0.95s cubic-bezier(0.2, 0.9, 0.2, 1) forwards;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.fade-up {
+  animation: fade-up 0.5s ease-out both;
+}
+.fade-up-1 {
+  animation-delay: 0.08s;
+}
+.fade-up-2 {
+  animation-delay: 0.16s;
+}
+.fade-up-3 {
+  animation-delay: 0.24s;
+}
+.fade-up-4 {
+  animation-delay: 0.32s;
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.blink {
+  animation: blink 0.8s ease-in-out infinite;
+}
+
+@keyframes loader-bar {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(260%);
+  }
+}
+.loader-bar {
+  animation: loader-bar 1.2s ease-in-out infinite;
+}
+
+.title-shadow {
+  text-shadow:
+    0 2px 0 rgba(0, 0, 0, 0.25),
+    0 18px 40px rgba(0, 0, 0, 0.45);
+}
+
+.touch-btn {
+  background: rgba(30, 22, 18, 0.5);
+  border: 1px solid rgba(243, 234, 217, 0.22);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  color: rgba(243, 234, 217, 0.9);
+  touch-action: none;
+}
+.touch-btn:active,
+.touch-btn.pressed {
+  background: rgba(216, 176, 124, 0.35);
+}
+
+.speed-ring {
+  transition: stroke-dashoffset 0.1s linear;
+}
