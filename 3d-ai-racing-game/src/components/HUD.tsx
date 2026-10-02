@@ -166,6 +166,47 @@ function SectorFlashCard({ flash }: { flash: NonNullable<HudData["sectorFlash"]>
   );
 }
 
+/** Launch-control rev meter shown while the lights are on. */
+function RevMeter({ revs }: { revs: number }) {
+  const inBand = revs >= 0.5 && revs <= 0.92;
+  return (
+    <div className="hud-chip w-[220px] rounded-2xl px-4 py-3 md:w-[300px]">
+      <div className="mb-1.5 flex items-center justify-between text-[9px] uppercase tracking-[0.25em] text-cream/55">
+        <span>Launch revs</span>
+        <span className={cn(inBand ? "text-juniper-bright" : "text-cream/40")}>
+          {inBand ? "Hold it" : revs > 0.92 ? "Lift off" : "Build revs"}
+        </span>
+      </div>
+      <div className="relative h-3 overflow-hidden rounded-full bg-cream/10">
+        {/* the green band you want to be in when the lights go out */}
+        <div className="absolute inset-y-0 left-[50%] w-[42%] bg-juniper/35" />
+        <div
+          className={cn(
+            "relative h-full rounded-full",
+            revs > 0.92 ? "bg-clay-bright" : inBand ? "bg-juniper-bright" : "bg-sand",
+          )}
+          style={{ width: `${Math.round(revs * 100)}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function DamageBar({ damage }: { damage: number }) {
+  if (damage < 0.06) return null;
+  return (
+    <div className="hud-chip mt-2 flex items-center gap-2 rounded-xl px-3 py-1.5">
+      <span className="text-[9px] uppercase tracking-[0.25em] text-cream/55">Damage</span>
+      <div className="h-1.5 w-20 overflow-hidden rounded-full bg-cream/10 md:w-28">
+        <div
+          className={cn("h-full rounded-full", damage > 0.5 ? "bg-clay-bright" : "bg-ochre")}
+          style={{ width: `${Math.round(Math.min(1, damage) * 100)}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 export default function HUD({ touch = false }: { touch?: boolean }) {
   const hud = useGameStore((s) => s.hud);
   const screen = useGameStore((s) => s.screen);
@@ -184,7 +225,9 @@ export default function HUD({ touch = false }: { touch?: boolean }) {
     }
   }, [hud.lap, hud.finalLap]);
 
+  const reduced = useGameStore((s) => s.settings.reducedMotion);
   const racing = screen === "racing" || screen === "paused" || screen === "countdown";
+  const speedFrac = Math.min(1, Math.max(0, (hud.speed - 115) / 115));
   const showCenter = screen !== "paused";
   const deltaGood = hud.delta !== null && hud.delta < 0;
 
@@ -195,6 +238,15 @@ export default function HUD({ touch = false }: { touch?: boolean }) {
         screen === "finished" && "opacity-0",
       )}
     >
+      {/* speed lines — purely cosmetic, off when motion is reduced */}
+      {!reduced && speedFrac > 0.02 && (
+        <div
+          className="speed-lines pointer-events-none absolute inset-0"
+          style={{ opacity: speedFrac * (hud.boosting ? 0.95 : 0.6) }}
+          aria-hidden
+        />
+      )}
+
       {/* top left: position + lap */}
       <div className="absolute left-4 top-4 flex items-start gap-2 md:left-7 md:top-6 md:gap-3">
         <div
@@ -325,6 +377,17 @@ export default function HUD({ touch = false }: { touch?: boolean }) {
 
       {/* bottom right: speed */}
       <div className={cn("absolute right-4 md:bottom-7 md:right-7", touch ? "bottom-[150px]" : "bottom-4")}>
+        {hud.draft > 0.12 && (
+          <div className="hud-chip mb-2 flex items-center justify-end gap-2 rounded-xl px-3 py-1.5">
+            <span className="text-[9px] uppercase tracking-[0.25em] text-cream/55">Slipstream</span>
+            <div className="h-1.5 w-16 overflow-hidden rounded-full bg-cream/10">
+              <div
+                className="h-full rounded-full bg-[#5fd6ff]"
+                style={{ width: `${Math.round(hud.draft * 100)}%` }}
+              />
+            </div>
+          </div>
+        )}
         <Speedometer
           speed={hud.speed}
           gear={hud.gear}
@@ -333,6 +396,7 @@ export default function HUD({ touch = false }: { touch?: boolean }) {
           offTrack={hud.offTrack}
           drifting={hud.drifting}
         />
+        <DamageBar damage={hud.damage} />
       </div>
 
       {/* center callouts */}
@@ -347,6 +411,21 @@ export default function HUD({ touch = false }: { touch?: boolean }) {
               className="countdown-num title-shadow font-display text-[120px] font-extrabold leading-none text-cream md:text-[200px]"
             >
               {hud.countdown}
+            </div>
+          )}
+          {hud.countdown > 0 && <RevMeter revs={hud.revs} />}
+          {!!hud.launchRating && hud.countdown <= 0 && (
+            <div
+              className={cn(
+                "fade-up hud-chip rounded-xl px-5 py-2 font-display text-xl font-bold uppercase tracking-[0.18em]",
+                hud.launchRating === "Perfect launch"
+                  ? "text-juniper-bright"
+                  : hud.launchRating === "Wheelspin" || hud.launchRating === "Asleep"
+                    ? "text-clay-bright"
+                    : "text-sand",
+              )}
+            >
+              {hud.launchRating}
             </div>
           )}
           {hud.countdown === 0 && (

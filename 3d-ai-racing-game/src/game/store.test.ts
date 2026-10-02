@@ -167,3 +167,101 @@ describe("settings", () => {
     expect(defaultHud.sectorDeltas).toHaveLength(3);
   });
 });
+
+/** Minimal localStorage so the persistence paths are exercised under node. */
+function installStorage() {
+  const map = new Map<string, string>();
+  const stub = {
+    getItem: (k: string) => map.get(k) ?? null,
+    setItem: (k: string, v: string) => void map.set(k, String(v)),
+    removeItem: (k: string) => void map.delete(k),
+    clear: () => map.clear(),
+    key: (i: number) => [...map.keys()][i] ?? null,
+    get length() {
+      return map.size;
+    },
+  };
+  (globalThis as { localStorage?: unknown }).localStorage = stub;
+  return stub;
+}
+
+describe("championship season", () => {
+  beforeEach(() => {
+    reset();
+    useGameStore.setState({ season: null });
+    installStorage();
+  });
+
+  const order = (winner: string) =>
+    [winner, ...["YOU", "ATLAS", "VECTOR", "NOMAD"].filter((n) => n !== winner)].map((name, i) => ({
+      name,
+      color: 0x111111 * (i + 1),
+      isPlayer: name === "YOU",
+    }));
+
+  it("awards 10/6/3/1 and sorts by points", () => {
+    const s = useGameStore.getState();
+    s.startSeason({
+      trackIds: ["sundown", "mesa"],
+      laps: 2,
+      difficulty: "pro",
+      carClassId: "coyote",
+      colors: {},
+    });
+    const rows = useGameStore.getState().scoreSeason(order("YOU"));
+    expect(rows[0]).toMatchObject({ name: "YOU", points: 10, gained: 10, isPlayer: true });
+    expect(rows.map((r) => r.points)).toEqual([10, 6, 3, 1]);
+  });
+
+  it("accumulates across rounds and finishes the season", () => {
+    const s = useGameStore.getState();
+    s.startSeason({
+      trackIds: ["sundown", "mesa"],
+      laps: 2,
+      difficulty: "pro",
+      carClassId: "coyote",
+      colors: {},
+    });
+    useGameStore.getState().scoreSeason(order("ATLAS"));
+    expect(useGameStore.getState().season?.raceIndex).toBe(1);
+    expect(useGameStore.getState().season?.done).toBe(false);
+    const rows = useGameStore.getState().scoreSeason(order("YOU"));
+    const you = rows.find((r) => r.isPlayer)!;
+    expect(you.points).toBe(16); // 6 + 10
+    expect(rows[0].name).toBe("YOU");
+    expect(useGameStore.getState().season?.done).toBe(true);
+  });
+
+  it("persists the season and can be cleared", () => {
+    const s = useGameStore.getState();
+    s.startSeason({
+      trackIds: ["sundown"],
+      laps: 1,
+      difficulty: "rookie",
+      carClassId: "coyote",
+      colors: {},
+    });
+    expect(localStorage.getItem("sundown-rally-season-v1")).toContain("sundown");
+    useGameStore.getState().endSeason();
+    expect(useGameStore.getState().season).toBeNull();
+    expect(localStorage.getItem("sundown-rally-season-v1")).toBeNull();
+  });
+
+  it("scoring without a season is a no-op", () => {
+    expect(useGameStore.getState().scoreSeason(order("YOU"))).toEqual([]);
+  });
+});
+
+describe("new settings", () => {
+  beforeEach(reset);
+
+  it("ships sane defaults for the phase-3 options", () => {
+    expect(defaultSettings.reverse).toBe(false);
+    expect(defaultSettings.timeOfDay).toBe("sunset");
+    expect(defaultSettings.fovOffset).toBe(0);
+    expect(defaultSettings.invertSteer).toBe(false);
+    expect(defaultSettings.showNameTags).toBe(true);
+    expect(defaultSettings.wildcardSeed).toBeGreaterThan(0);
+    expect(defaultSettings.keyBinds.throttle).toContain("w");
+  });
+});

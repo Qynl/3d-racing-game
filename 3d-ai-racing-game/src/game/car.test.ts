@@ -295,3 +295,85 @@ describe("steering", () => {
     expect(airDelta).toBeLessThan(groundDelta);
   });
 });
+
+describe("launch control, slipstream and damage", () => {
+  it("launch assist gets the car moving quicker off the line", () => {
+    const plain = freshCar();
+    drive(plain, input({ throttle: 1 }), 1.2);
+    const launched = freshCar();
+    launched.applyLaunch(1);
+    drive(launched, input({ throttle: 1 }), 1.2);
+    expect(launched.speedF).toBeGreaterThan(plain.speedF * 1.08);
+  });
+
+  it("bogging down costs you the start", () => {
+    const plain = freshCar();
+    drive(plain, input({ throttle: 1 }), 0.8);
+    const bogged = freshCar();
+    bogged.applyBog(1.2);
+    drive(bogged, input({ throttle: 1 }), 0.8);
+    expect(bogged.speedF).toBeLessThan(plain.speedF * 0.75);
+    expect(bogged.bog).toBeGreaterThan(0);
+  });
+
+  it("a full slipstream raises terminal speed", () => {
+    const alone = freshCar();
+    drive(alone, input({ throttle: 1 }), 24);
+    const drafting = freshCar();
+    drafting.draft = 1;
+    for (let i = 0; i < 24 * 120; i++) {
+      drafting.draft = 1;
+      drafting.step(input({ throttle: 1 }), 1 / 120, flatTerrain(), straightTrack());
+    }
+    expect(drafting.speedF).toBeGreaterThan(alone.speedF + 1);
+  });
+
+  it("damage caps top speed and then repairs itself", () => {
+    const car = freshCar();
+    car.addDamage(0.6);
+    expect(car.damage).toBeCloseTo(0.6, 5);
+    drive(car, input({ throttle: 1 }), 20);
+    const hurt = car.speedF;
+    const healthy = freshCar();
+    drive(healthy, input({ throttle: 1 }), 20);
+    expect(hurt).toBeLessThan(healthy.speedF);
+    expect(car.damage).toBeLessThan(0.6);
+  });
+
+  it("clamps damage to 0..1 and clears it on a race reset", () => {
+    const car = freshCar();
+    car.addDamage(5);
+    expect(car.damage).toBe(1);
+    car.applyLaunch(2);
+    car.resetRaceState();
+    expect(car.damage).toBe(0);
+    expect(car.launchAssist).toBe(0);
+    expect(car.draft).toBe(0);
+    expect(car.surface).toBe("track");
+  });
+
+  it("flags the rumble strip near the edge of the surface", () => {
+    const car = freshCar("coyote", straightTrack(6.9));
+    drive(car, input({ throttle: 1 }), 1, straightTrack(6.9));
+    expect(car.surface).toBe("rumble");
+    expect(car.rumble).toBeGreaterThan(0);
+
+    const middle = freshCar("coyote", straightTrack(0));
+    drive(middle, input({ throttle: 1 }), 1, straightTrack(0));
+    expect(middle.surface).toBe("track");
+
+    const off = freshCar("coyote", straightTrack(20));
+    drive(off, input({ throttle: 1 }), 1, straightTrack(20));
+    expect(off.surface).toBe("sand");
+  });
+
+  it("the rumble strip costs grip compared with clean track", () => {
+    const clean = freshCar("coyote", straightTrack(0));
+    drive(clean, input({ throttle: 1 }), 6, straightTrack(0));
+    drive(clean, input({ throttle: 1, steer: 1 }), 1.2, straightTrack(0));
+    const strip = freshCar("coyote", straightTrack(6.9));
+    drive(strip, input({ throttle: 1 }), 6, straightTrack(6.9));
+    drive(strip, input({ throttle: 1, steer: 1 }), 1.2, straightTrack(6.9));
+    expect(Math.abs(strip.speedR)).toBeGreaterThan(Math.abs(clean.speedR));
+  });
+});

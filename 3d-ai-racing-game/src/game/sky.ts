@@ -1,27 +1,128 @@
 import * as THREE from "three";
 import { mulberry32 } from "./noise";
 
-export const SUN_DIR = new THREE.Vector3(
-  Math.cos(THREE.MathUtils.degToRad(24)) * Math.sin(THREE.MathUtils.degToRad(-52)),
-  Math.sin(THREE.MathUtils.degToRad(24)),
-  Math.cos(THREE.MathUtils.degToRad(24)) * Math.cos(THREE.MathUtils.degToRad(-52)),
-).normalize();
+export type TimeOfDayId = "sunset" | "noon" | "night";
 
-export const HORIZON_COLOR = new THREE.Color(0xf0b58a);
+export interface SkyPalette {
+  id: TimeOfDayId;
+  name: string;
+  /** Sun elevation / azimuth in degrees. */
+  elevation: number;
+  azimuth: number;
+  sunColor: number;
+  sunIntensity: number;
+  top: number;
+  mid: number;
+  horizon: number;
+  bottom: number;
+  sunDisc: number;
+  hemiSky: number;
+  hemiGround: number;
+  hemiIntensity: number;
+  ambient: number;
+  ambientIntensity: number;
+  exposure: number;
+  envIntensity: number;
+  /** Cars switch their headlights on. */
+  headlights: boolean;
+}
 
-export function createSkyDome(): THREE.Mesh {
+export const SKIES: Record<TimeOfDayId, SkyPalette> = {
+  sunset: {
+    id: "sunset",
+    name: "Golden hour",
+    elevation: 24,
+    azimuth: -52,
+    sunColor: 0xffd4a4,
+    sunIntensity: 3.1,
+    top: 0x40557a,
+    mid: 0x9d8fa3,
+    horizon: 0xf0b58a,
+    bottom: 0xc48a62,
+    sunDisc: 0xffd8a6,
+    hemiSky: 0xb9c4dc,
+    hemiGround: 0xa8673f,
+    hemiIntensity: 0.95,
+    ambient: 0xffe0c0,
+    ambientIntensity: 0.12,
+    exposure: 1.05,
+    envIntensity: 0.4,
+    headlights: false,
+  },
+  noon: {
+    id: "noon",
+    name: "High noon",
+    elevation: 68,
+    azimuth: -20,
+    sunColor: 0xfff3dc,
+    sunIntensity: 3.6,
+    top: 0x2f6fc4,
+    mid: 0x7fb2e6,
+    horizon: 0xd9e6f0,
+    bottom: 0xcdbb9c,
+    sunDisc: 0xffffff,
+    hemiSky: 0xcfe2ff,
+    hemiGround: 0xbb8a5c,
+    hemiIntensity: 1.15,
+    ambient: 0xffffff,
+    ambientIntensity: 0.2,
+    exposure: 0.95,
+    envIntensity: 0.65,
+    headlights: false,
+  },
+  night: {
+    id: "night",
+    name: "Desert night",
+    elevation: 16,
+    azimuth: 128,
+    sunColor: 0x9ab4ff,
+    sunIntensity: 0.55,
+    top: 0x060a1c,
+    mid: 0x111b38,
+    horizon: 0x2b2a4a,
+    bottom: 0x14121f,
+    sunDisc: 0xdfe6ff,
+    hemiSky: 0x334066,
+    hemiGround: 0x241c1c,
+    hemiIntensity: 0.4,
+    ambient: 0x8899cc,
+    ambientIntensity: 0.07,
+    exposure: 1.3,
+    envIntensity: 0.12,
+    headlights: true,
+  },
+};
+
+function dirFrom(elevation: number, azimuth: number): THREE.Vector3 {
+  const e = THREE.MathUtils.degToRad(elevation);
+  const a = THREE.MathUtils.degToRad(azimuth);
+  return new THREE.Vector3(Math.cos(e) * Math.sin(a), Math.sin(e), Math.cos(e) * Math.cos(a)).normalize();
+}
+
+/** Live sun direction — mutated when the time of day changes. */
+export const SUN_DIR = dirFrom(SKIES.sunset.elevation, SKIES.sunset.azimuth);
+
+/** Live horizon colour, used for fog and scene background. */
+export const HORIZON_COLOR = new THREE.Color(SKIES.sunset.horizon);
+
+export function sunDirFor(p: SkyPalette): THREE.Vector3 {
+  return dirFrom(p.elevation, p.azimuth);
+}
+
+export function createSkyDome(palette: SkyPalette = SKIES.sunset): THREE.Mesh {
   const geo = new THREE.SphereGeometry(1000, 32, 16);
   const mat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
     fog: false,
     uniforms: {
-      topColor: { value: new THREE.Color(0x40557a) },
-      midColor: { value: new THREE.Color(0x9d8fa3) },
-      horizonColor: { value: HORIZON_COLOR.clone() },
-      bottomColor: { value: new THREE.Color(0xc48a62) },
-      sunDir: { value: SUN_DIR.clone() },
-      sunColor: { value: new THREE.Color(0xffd8a6) },
+      topColor: { value: new THREE.Color(palette.top) },
+      midColor: { value: new THREE.Color(palette.mid) },
+      horizonColor: { value: new THREE.Color(palette.horizon) },
+      bottomColor: { value: new THREE.Color(palette.bottom) },
+      sunDir: { value: sunDirFor(palette) },
+      sunColor: { value: new THREE.Color(palette.sunDisc) },
+      starAmount: { value: palette.id === "night" ? 1 : 0 },
     },
     vertexShader: /* glsl */ `
       varying vec3 vWorldPos;
@@ -38,7 +139,15 @@ export function createSkyDome(): THREE.Mesh {
       uniform vec3 bottomColor;
       uniform vec3 sunDir;
       uniform vec3 sunColor;
+      uniform float starAmount;
       varying vec3 vWorldPos;
+
+      // cheap hash-based starfield
+      float hash31(vec3 p) {
+        p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));
+        p *= 17.0;
+        return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+      }
       void main() {
         vec3 dir = normalize(vWorldPos - cameraPosition);
         float h = dir.y;
@@ -56,6 +165,12 @@ export function createSkyDome(): THREE.Mesh {
         float disk = smoothstep(0.99955, 0.9997, d);
         col += sunColor * glow;
         col = mix(col, vec3(1.0, 0.93, 0.8) * 1.6, disk);
+        if (starAmount > 0.0 && h > 0.0) {
+          vec3 cell = floor(dir * 240.0);
+          float r = hash31(cell);
+          float star = smoothstep(0.9975, 1.0, r) * smoothstep(0.02, 0.35, h);
+          col += vec3(0.9, 0.93, 1.0) * star * 2.4 * starAmount;
+        }
         // haze band near horizon
         col = mix(col, horizonColor, (1.0 - smoothstep(0.0, 0.06, abs(h))) * 0.5);
         gl_FragColor = vec4(col, 1.0);
@@ -166,13 +281,22 @@ export function createClouds(seed: number, count = 16): CloudField {
   return { group, update };
 }
 
-/** Sun + fill lights. Only the sun is returned — it is the only one we retune. */
+export interface LightRig {
+  sun: THREE.DirectionalLight;
+  hemi: THREE.HemisphereLight;
+  ambient: THREE.AmbientLight;
+  /** Retunes every light for a new time of day. */
+  apply: (palette: SkyPalette) => void;
+}
+
+/** Sun + fill lights, retunable for any time of day. */
 export function createLighting(
   scene: THREE.Scene,
-  opts: { shadows?: boolean; mapSize?: number } = {},
-): THREE.DirectionalLight {
+  opts: { shadows?: boolean; mapSize?: number; palette?: SkyPalette } = {},
+): LightRig {
   const mapSize = opts.mapSize ?? 2048;
-  const sun = new THREE.DirectionalLight(0xffd4a4, 3.1);
+  const palette = opts.palette ?? SKIES.sunset;
+  const sun = new THREE.DirectionalLight(palette.sunColor, palette.sunIntensity);
   sun.position.copy(SUN_DIR).multiplyScalar(140);
   sun.castShadow = opts.shadows !== false;
   sun.shadow.mapSize.set(mapSize, mapSize);
@@ -189,7 +313,35 @@ export function createLighting(
   scene.add(sun);
   scene.add(sun.target);
 
-  scene.add(new THREE.HemisphereLight(0xb9c4dc, 0xa8673f, 0.95));
-  scene.add(new THREE.AmbientLight(0xffe0c0, 0.12));
-  return sun;
+  const hemi = new THREE.HemisphereLight(palette.hemiSky, palette.hemiGround, palette.hemiIntensity);
+  scene.add(hemi);
+  const ambient = new THREE.AmbientLight(palette.ambient, palette.ambientIntensity);
+  scene.add(ambient);
+
+  const apply = (p: SkyPalette) => {
+    sun.color.set(p.sunColor);
+    sun.intensity = p.sunIntensity;
+    hemi.color.set(p.hemiSky);
+    hemi.groundColor.set(p.hemiGround);
+    hemi.intensity = p.hemiIntensity;
+    ambient.color.set(p.ambient);
+    ambient.intensity = p.ambientIntensity;
+  };
+
+  return { sun, hemi, ambient, apply };
+}
+
+/** Repaints an existing sky dome for a different time of day. */
+export function applySkyPalette(sky: THREE.Mesh, palette: SkyPalette) {
+  const mat = sky.material as THREE.ShaderMaterial;
+  const u = mat.uniforms;
+  (u.topColor.value as THREE.Color).set(palette.top);
+  (u.midColor.value as THREE.Color).set(palette.mid);
+  (u.horizonColor.value as THREE.Color).set(palette.horizon);
+  (u.bottomColor.value as THREE.Color).set(palette.bottom);
+  (u.sunColor.value as THREE.Color).set(palette.sunDisc);
+  (u.sunDir.value as THREE.Vector3).copy(sunDirFor(palette));
+  u.starAmount.value = palette.id === "night" ? 1 : 0;
+  SUN_DIR.copy(sunDirFor(palette));
+  HORIZON_COLOR.set(palette.horizon);
 }

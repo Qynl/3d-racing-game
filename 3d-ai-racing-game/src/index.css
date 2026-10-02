@@ -281,3 +281,38 @@ canvas.game-canvas {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Speed lines: a cheap radial streak overlay that fades in with velocity. */
+.speed-lines {
+  background:
+    radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 38%, rgba(0, 0, 0, 0.42) 100%),
+    repeating-conic-gradient(
+      from 0deg at 50% 50%,
+      rgba(246, 236, 224, 0.1) 0deg 0.5deg,
+      rgba(246, 236, 224, 0) 0.5deg 6deg
+    );
+  mask-image: radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 42%, rgba(0, 0, 0, 1) 95%);
+  transition: opacity 0.2s linear;
+}
+
+/* Colour-blind-safe palette: swaps the red/green pair for blue/orange. */
+[data-cbs="1"] .text-juniper-bright,
+[data-cbs="1"] .text-juniper {
+  color: #5fd6ff;
+}
+[data-cbs="1"] .text-clay-bright,
+[data-cbs="1"] .text-clay {
+  color: #ffb257;
+}
+[data-cbs="1"] .bg-juniper-bright {
+  background-color: #5fd6ff;
+}
+[data-cbs="1"] .bg-clay-bright {
+  background-color: #ffb257;
+}
+[data-cbs="1"] .border-juniper\/50 {
+  border-color: rgba(95, 214, 255, 0.5);
+}
+[data-cbs="1"] .border-clay\/50 {
+  border-color: rgba(255, 178, 87, 0.5);
+}

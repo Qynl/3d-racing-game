@@ -25,8 +25,10 @@ import {
   type QualityId,
   type QualityPreset,
   SECTOR_COUNT,
+  TRACKS,
   carClassById,
   trackById,
+  wildcardTrack,
 } from "./config";
 import { GhostPlayer, GhostRecorder, loadGhost, saveGhost } from "./ghost";
 import { InputManager, type InputAction } from "./input";
@@ -34,8 +36,27 @@ import { Noise, clamp, damp, lerp } from "./noise";
 import { ParticleSystem } from "./particles";
 import { buildProps, type Collider } from "./props";
 import { SkidMarks } from "./skidmarks";
-import { CloudField, HORIZON_COLOR, SUN_DIR, createClouds, createLighting, createSkyDome } from "./sky";
-import { type RaceResults, type Screen, type Settings, defaultHud, raceKey, useGameStore } from "./store";
+import {
+  CloudField,
+  type LightRig,
+  SKIES,
+  SUN_DIR,
+  type SkyPalette,
+  type TimeOfDayId,
+  applySkyPalette,
+  createClouds,
+  createLighting,
+  createSkyDome,
+} from "./sky";
+import {
+  type RaceResults,
+  type Screen,
+  type Settings,
+  type StandingRow,
+  defaultHud,
+  raceKey,
+  useGameStore,
+} from "./store";
 import { Terrain, WORLD_RADIUS } from "./terrain";
 import { ColliderGrid } from "./collision";
 import type { MinimapBounds, MinimapScene } from "./minimap";
@@ -67,6 +88,13 @@ interface CarEntity {
   // skid marks
   skidPrev: { x: number; y: number; z: number }[] | null;
   stuckTimer: number;
+  /** Floating name plate, null for the player. */
+  tag: THREE.Sprite | null;
+  /** Rumble-strip rattle cooldown. */
+  rattle: number;
+  /** Damage smoke emitter accumulator. */
+  smokeAcc: number;
+  headlights: THREE.SpotLight | null;
 }
 
 /**
@@ -115,6 +143,8 @@ export class Game {
   clouds!: CloudField;
   sky!: THREE.Mesh;
   sun!: THREE.DirectionalLight;
+  lights!: LightRig;
+  palette: SkyPalette = SKIES.sunset;
   particles!: ParticleSystem;
   skid!: SkidMarks;
   racingLine: THREE.Mesh | null = null;
@@ -175,6 +205,9 @@ export class Game {
   private colBuf: Collider[] = [];
   private playerInput: CarInput = { ...NEUTRAL_INPUT };
   private wasBoosting = false;
+  /** Launch-control rev meter, charged while the lights are on. */
+  private launchRevs = 0;
+  private launchDone = false;
 
   // adaptive resolution
   private resScale = 1;
@@ -217,20 +250,21 @@ export class Game {
     this.renderer.shadowMap.enabled = q.shadows;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.palette = SKIES[this.settings.timeOfDay] ?? SKIES.sunset;
+    this.renderer.toneMappingExposure = this.palette.exposure;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     this.canvas.addEventListener("webglcontextlost", this.onContextLost as EventListener, false);
     this.canvas.addEventListener("webglcontextrestored", this.onContextRestored as EventListener, false);
 
     const scene = new THREE.Scene();
-    scene.background = HORIZON_COLOR.clone();
-    scene.fog = new THREE.Fog(HORIZON_COLOR.clone(), 100, q.viewDistance);
+    scene.background = new THREE.Color(this.palette.horizon);
+    scene.fog = new THREE.Fog(new THREE.Color(this.palette.horizon), 100, q.viewDistance);
     this.scene = scene;
 
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    scene.environmentIntensity = 0.4;
+    scene.environmentIntensity = this.palette.envIntensity;
     pmrem.dispose();
 
     this.camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.3, 1800);
@@ -238,9 +272,9 @@ export class Game {
     store.setProgress(0.02, "Seeding the desert");
     await nextFrame();
 
-    const def = trackById(this.settings.trackId);
+    const def = this.defFor(this.settings.trackId);
     this.noise = new Noise(1337 + def.seed);
-    this.track = new Track(def);
+    this.track = new Track(def, this.settings.reverse);
     this.terrain = await Terrain.create(this.noise, this.track, (f, label) =>
       store.setProgress(0.02 + f * 0.8, label),
     );
@@ -262,11 +296,17 @@ export class Game {
 
     store.setProgress(0.93, "Hanging the sun");
     await nextFrame();
-    this.sky = createSkyDome();
+    this.sky = createSkyDome(this.palette);
     scene.add(this.sky);
     this.clouds = createClouds(3, q.cloudCount);
     scene.add(this.clouds.group);
-    this.sun = createLighting(scene, { shadows: q.shadows, mapSize: q.shadowMapSize });
+    this.lights = createLighting(scene, {
+      shadows: q.shadows,
+      mapSize: q.shadowMapSize,
+      palette: this.palette,
+    });
+    this.sun = this.lights.sun;
+    applySkyPalette(this.sky, this.palette);
 
     this.particles = new ParticleSystem(q.particles);
     scene.add(this.particles.points);
@@ -275,6 +315,7 @@ export class Game {
 
     this.setupComposer();
 
+    this.input.setBinds(this.settings.keyBinds);
     this.input.onAction = (a) => this.handleAction(a);
     this.input.onGamepadChange = (connected) => {
       if (connected) {
@@ -398,8 +439,54 @@ export class Game {
 
   // ---------------------------------------------------------------- setup
 
+  /** Resolves a track id to its definition, rolling the wildcard if needed. */
+  private defFor(trackId: string) {
+    return trackId === "wildcard" ? wildcardTrack(this.settings.wildcardSeed) : trackById(trackId);
+  }
+
+  /** Repaints the world for a different time of day. Cheap — no rebuild. */
+  applyTimeOfDay(id: TimeOfDayId) {
+    const p = SKIES[id] ?? SKIES.sunset;
+    this.palette = p;
+    applySkyPalette(this.sky, p);
+    this.lights.apply(p);
+    this.renderer.toneMappingExposure = p.exposure;
+    this.scene.environmentIntensity = p.envIntensity;
+    (this.scene.background as THREE.Color).set(p.horizon);
+    const fog = this.scene.fog as THREE.Fog | null;
+    if (fog) {
+      fog.color.set(p.horizon);
+      fog.near = p.id === "night" ? 60 : 100;
+    }
+    for (const c of this.cars) this.applyCarLights(c);
+    if (this.ghostVisual) this.ghostVisual.headMat.emissiveIntensity = p.headlights ? 2 : 0.4;
+  }
+
+  /** Headlight beam + lamp glow for one car, matching the current sky. */
+  private applyCarLights(e: CarEntity) {
+    const on = this.palette.headlights;
+    e.visual.headMat.emissive.set(0xfff0cc);
+    e.visual.headMat.emissiveIntensity = on ? 3.4 : 0.35;
+    const isPlayer = e === this.player;
+    if (on && isPlayer && !e.headlights) {
+      const spot = new THREE.SpotLight(0xfff0d0, 90, 120, 0.46, 0.55, 1.3);
+      spot.position.set(0, 1.0, 2.1);
+      spot.target.position.set(0, -0.3, 40);
+      e.visual.root.add(spot);
+      e.visual.root.add(spot.target);
+      e.headlights = spot;
+    }
+    if (e.headlights) e.headlights.visible = on;
+  }
+
   private destroyCars() {
     for (const c of this.cars) {
+      if (c.tag) {
+        c.tag.material.map?.dispose();
+        c.tag.material.dispose();
+        c.visual.root.remove(c.tag);
+      }
+      c.headlights = null;
       this.scene.remove(c.visual.root);
       disposeCarVisual(c.visual);
     }
@@ -438,6 +525,14 @@ export class Game {
     const player = this.makeEntity(CAR_COLORS[s.carColor].hex, 1, null, "YOU", playerClass.id);
     this.cars.push(player);
     this.player = player;
+
+    for (const e of this.cars) {
+      if (e !== player) {
+        e.tag = this.makeNameTag(e.name, e.color);
+        if (e.tag) e.visual.root.add(e.tag);
+      }
+      this.applyCarLights(e);
+    }
 
     // Audio voices: index 0 is always the player.
     if (this.audio.ready) this.audio.configureEngines(this.cars.length);
@@ -488,7 +583,44 @@ export class Game {
       offCourseTimer: 0,
       skidPrev: null,
       stuckTimer: 0,
+      tag: null,
+      rattle: 0,
+      smokeAcc: 0,
+      headlights: null,
     };
+  }
+
+  /** Billboard name plate drawn into a small canvas texture. */
+  private makeNameTag(name: string, color: number): THREE.Sprite | null {
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 64;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    const hex = `#${color.toString(16).padStart(6, "0")}`;
+    ctx.clearRect(0, 0, 256, 64);
+    ctx.fillStyle = "rgba(14,12,11,0.68)";
+    ctx.beginPath();
+    ctx.roundRect(8, 10, 240, 44, 12);
+    ctx.fill();
+    ctx.fillStyle = hex;
+    ctx.beginPath();
+    ctx.roundRect(8, 10, 10, 44, 5);
+    ctx.fill();
+    ctx.font = "600 28px system-ui, sans-serif";
+    ctx.fillStyle = "#f6ece0";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(name, 134, 33);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const sprite = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false }),
+    );
+    sprite.scale.set(4.2, 1.05, 1);
+    sprite.position.set(0, 2.9, 0);
+    sprite.renderOrder = 6;
+    return sprite;
   }
 
   private ensureGhostVisual() {
@@ -536,6 +668,8 @@ export class Game {
       e.offCourseTimer = 0;
       e.skidPrev = null;
       e.stuckTimer = 0;
+      e.rattle = 0;
+      e.smokeAcc = 0;
       e.physics.syncVisual(e.visual, this.time);
     });
   }
@@ -547,9 +681,19 @@ export class Game {
 
   // ---------------------------------------------------------------- state control
 
+  /** True when the loaded world no longer matches the requested settings. */
+  private worldStale(trackId: string): boolean {
+    if (trackId !== this.track.def.id) return true;
+    if (this.track.reversed !== this.settings.reverse) return true;
+    if (trackId === "wildcard" && this.track.def.name !== `Wildcard #${this.settings.wildcardSeed}`) {
+      return true;
+    }
+    return false;
+  }
+
   /** Rebuild the world for a different track (async, shows the loader again). */
   async changeTrack(trackId: string) {
-    if (trackId === this.track.def.id) return;
+    if (!this.worldStale(trackId)) return;
     const store = useGameStore.getState();
     store.setLoaded(false);
     store.setProgress(0.02, "Grading a new circuit");
@@ -567,9 +711,10 @@ export class Game {
       }
     }
 
-    const def = trackById(trackId);
+    const def = this.defFor(trackId);
+    this.settings = { ...this.settings, trackId };
     this.noise = new Noise(1337 + def.seed);
-    this.track = new Track(def);
+    this.track = new Track(def, this.settings.reverse);
     this.terrain = await Terrain.create(this.noise, this.track, (f, label) =>
       store.setProgress(0.02 + f * 0.8, label),
     );
@@ -600,7 +745,55 @@ export class Game {
     store.setLoaded(true);
   }
 
+  /** The circuit list for a fresh championship season. */
+  private seasonTracks(): string[] {
+    return TRACKS.map((t) => t.id);
+  }
+
   startRace(settings: Settings) {
+    const store = useGameStore.getState();
+    if (settings.mode === "championship") {
+      let season = store.season;
+      if (!season || season.done || season.laps !== settings.laps) {
+        store.startSeason({
+          trackIds: this.seasonTracks(),
+          laps: settings.laps,
+          difficulty: settings.difficulty,
+          carClassId: settings.carClassId,
+          colors: {},
+        });
+        season = useGameStore.getState().season;
+      }
+      if (season) {
+        const target = season.trackIds[Math.min(season.raceIndex, season.trackIds.length - 1)];
+        const next = { ...settings, trackId: target, reverse: season.raceIndex % 2 === 1 };
+        if (this.worldStale(target) || this.track.reversed !== next.reverse) {
+          this.settings = next;
+          void this.changeTrack(target).then(() => {
+            this.beginRace({ ...useGameStore.getState().settings, ...next });
+          });
+          return;
+        }
+        this.beginRace(next);
+        return;
+      }
+    }
+    this.beginRace(settings);
+  }
+
+  /** Advance a championship to the next round from the results screen. */
+  nextSeasonRace() {
+    const store = useGameStore.getState();
+    const season = store.season;
+    if (!season || season.done) {
+      store.setScreen("menu");
+      this.quitToMenu();
+      return;
+    }
+    this.startRace({ ...store.settings, mode: "championship" });
+  }
+
+  private beginRace(settings: Settings) {
     this.settings = settings;
     this.totalLaps = settings.laps;
     this.cameraMode = settings.cameraMode;
@@ -625,6 +818,8 @@ export class Game {
     this.lastSplitBucket = -1;
     this.lastPosition = this.cars.length;
     this.pendingGhost = null;
+    this.launchRevs = 0;
+    this.launchDone = false;
     this.ghostRec.reset();
     this.ghostPlayer?.reset();
     this.state = "countdown";
@@ -695,7 +890,22 @@ export class Game {
   applySettings(settings: Settings) {
     const prevQuality = this.settings.quality;
     const prevLine = this.settings.showRacingLine;
+    const prevTod = this.settings.timeOfDay;
+    const prevReverse = this.settings.reverse;
+    const prevSeed = this.settings.wildcardSeed;
     this.settings = settings;
+    this.input.setBinds(settings.keyBinds);
+    if (prevTod !== settings.timeOfDay) this.applyTimeOfDay(settings.timeOfDay);
+    if (
+      this.state === "menu" &&
+      (prevReverse !== settings.reverse ||
+        (settings.trackId === "wildcard" && prevSeed !== settings.wildcardSeed))
+    ) {
+      void this.changeTrack(settings.trackId);
+    }
+    for (const c of this.cars) {
+      if (c.tag) c.tag.visible = settings.showNameTags && c !== this.player;
+    }
     this.cameraMode = settings.cameraMode;
     this.audio.setVolumes(settings.masterVolume, settings.musicVolume, settings.muted);
     if (this.racingLine && prevLine !== settings.showRacingLine) {
@@ -817,6 +1027,7 @@ export class Game {
     this.skid.update(dt);
 
     if (this.state === "menu") {
+      for (const c of this.cars) if (c.tag) c.tag.visible = false;
       this.updateMenuCamera(dt);
       this.updateSun(this.camLook);
       this.updateListener();
@@ -838,9 +1049,24 @@ export class Game {
         sensitivity: this.settings.steerSensitivity,
         tilt: this.settings.touchSteer === "tilt",
       });
-      this.audio.updateEngine(0, 0, inp.throttle, dt, true);
+      // Launch control: feather the throttle into the green band before GO.
+      const rev = inp.throttle > 0.05 ? inp.throttle : -0.7;
+      this.launchRevs = clamp(this.launchRevs + rev * dt * 0.85, 0, 1);
+      this.audio.updateEngine(
+        0,
+        this.launchRevs * 14,
+        Math.max(inp.throttle, this.launchRevs * 0.8),
+        dt,
+        true,
+      );
       this.audio.updateAmbience(0, 0, false, true);
+      this.hudAcc += dt;
+      if (this.hudAcc > 0.06) {
+        this.hudAcc = 0;
+        useGameStore.getState().setHud({ revs: this.launchRevs });
+      }
       if (this.countdownTimer <= 0) {
+        this.resolveLaunch();
         this.state = "racing";
         this.raceTime = 0;
         this.goTimer = 1.1;
@@ -902,6 +1128,74 @@ export class Game {
     }
   }
 
+  /** Grades the player's start and gives everyone a launch off the line. */
+  private resolveLaunch() {
+    if (this.launchDone) return;
+    this.launchDone = true;
+    const p = this.player!;
+    const r = this.launchRevs;
+    const store = useGameStore.getState();
+    let rating = "";
+    if (r > 0.92) {
+      // Lift before the lights go out — too many revs just lights up the tyres.
+      p.physics.applyBog(0.7);
+      rating = "Wheelspin";
+      this.audio.badChime();
+    } else if (r >= 0.5) {
+      const quality = clamp(1 - Math.abs(r - 0.74) / 0.24, 0.3, 1);
+      p.physics.applyLaunch(quality);
+      rating = quality > 0.8 ? "Perfect launch" : "Good launch";
+      if (quality > 0.8) this.audio.boostPickup();
+      this.input.rumble(0.4 + quality * 0.4, 200);
+    } else if (r > 0.18) {
+      p.physics.applyLaunch(0.3);
+      rating = "Slow away";
+    } else {
+      rating = "Asleep";
+      this.audio.badChime();
+    }
+    store.setHud({ launchRating: rating, revs: 0 });
+    store.pushToast({ text: rating, kind: r > 0.9 || r <= 0.18 ? "bad" : "good" });
+    window.setTimeout(() => {
+      const st = useGameStore.getState();
+      if (st.hud.launchRating === rating) st.setHud({ launchRating: "" });
+    }, 1800);
+
+    // Rivals get their own, difficulty-scaled starts.
+    const diff = DIFFICULTIES[this.settings.difficulty];
+    for (const e of this.cars) {
+      if (!e.ai) continue;
+      const q = clamp(diff.aggression * 0.6 + Math.random() * 0.5, 0, 1);
+      if (q < 0.18) e.physics.applyBog(0.6);
+      else e.physics.applyLaunch(q);
+    }
+  }
+
+  /**
+   * Slipstream: a car tucked in behind another within ~24 m gets a top-speed
+   * and drag break, which keeps the pack together and makes passes possible.
+   */
+  private updateDraft(dt: number) {
+    for (const e of this.cars) {
+      const fwd = e.physics.forward(this.tmpV);
+      let best = 0;
+      for (const o of this.cars) {
+        if (o === e) continue;
+        const dx = o.physics.pos.x - e.physics.pos.x;
+        const dz = o.physics.pos.z - e.physics.pos.z;
+        const along = dx * fwd.x + dz * fwd.z;
+        if (along < 2.5 || along > 24) continue;
+        const lat = Math.abs(-dx * fwd.z + dz * fwd.x);
+        if (lat > 3.4) continue;
+        const oFwd = o.physics.forward(this.tmpV4);
+        if (fwd.x * oFwd.x + fwd.z * oFwd.z < 0.55) continue;
+        best = Math.max(best, (1 - (along - 2.5) / 21.5) * (1 - lat / 3.4));
+      }
+      const target = e.physics.speedF > 16 ? best : 0;
+      e.physics.draft = damp(e.physics.draft, target, 3.5, dt);
+    }
+  }
+
   // ---------------------------------------------------------------- simulation
 
   private stepSimulation(dt: number) {
@@ -914,7 +1208,9 @@ export class Game {
     } else {
       this.playerInput = { throttle: 0, brake: 0.35, steer: 0, handbrake: false, boost: false };
     }
+    if (this.settings.invertSteer) this.playerInput = { ...this.playerInput, steer: -this.playerInput.steer };
     player.input = this.playerInput;
+    this.updateDraft(dt);
 
     if (this.playerInput.boost && player.physics.boost > 0.02 && !this.wasBoosting) {
       this.audio.boostStart();
@@ -1066,7 +1362,12 @@ export class Game {
         0.5,
       );
     }
+    const before = e.physics.damage;
+    e.physics.addDamage(strength / 95);
     if (e === this.player) {
+      if (before < 0.5 && e.physics.damage >= 0.5) {
+        useGameStore.getState().pushToast({ text: "Bodywork damaged", kind: "bad" });
+      }
       this.shake = Math.min(1, this.shake + clamp(strength / 18, 0.1, 0.7));
       this.audio.impact(strength);
       this.input.rumble(clamp(strength / 20, 0.15, 1), 160);
@@ -1319,8 +1620,22 @@ export class Game {
       }
     }
 
+    let standings: StandingRow[] = [];
+    let seasonRace: { index: number; total: number } | null = null;
+    let seasonDone = false;
+    if (this.settings.mode === "championship" && store.season) {
+      seasonRace = { index: store.season.raceIndex + 1, total: store.season.trackIds.length };
+      standings = store.scoreSeason(
+        order.map((c) => ({ name: c.name, color: c.color, isPlayer: c === player })),
+      );
+      seasonDone = useGameStore.getState().season?.done ?? false;
+    }
+
     const results: RaceResults = {
       position,
+      standings,
+      seasonRace,
+      seasonDone,
       totalTime: total,
       lapTimes: [...player.lapTimes],
       bestLap,
@@ -1424,6 +1739,55 @@ export class Game {
           );
         }
         if (budget <= 0) e.dustAcc = 0;
+      }
+
+      // --- damage smoke
+      if (p.damage > 0.45 && sp > 3) {
+        e.smokeAcc += (p.damage - 0.45) * 26 * dt;
+        while (e.smokeAcc >= 1) {
+          e.smokeAcc -= 1;
+          this.particles.emit(
+            p.pos.x + fwd.x * 1.4 + (Math.random() - 0.5) * 0.6,
+            p.pos.y + 1.1,
+            p.pos.z + fwd.z * 1.4 + (Math.random() - 0.5) * 0.6,
+            -fwd.x * 2 + (Math.random() - 0.5) * 1.2,
+            1.6 + Math.random() * 1.4,
+            -fwd.z * 2 + (Math.random() - 0.5) * 1.2,
+            0.5 + Math.random() * 0.5,
+            1.3 + Math.random() * 0.9,
+            1.8,
+            0x3a3330,
+            0.45,
+          );
+        }
+      }
+
+      // --- rumble strips: rattle the car and the audio
+      if (p.rumble > 0 && sp > 8) {
+        e.rattle -= dt;
+        if (e.rattle <= 0) {
+          e.rattle = 0.09;
+          if (e === this.player) {
+            this.shake = Math.min(0.55, this.shake + 0.1 + sp * 0.002);
+            this.audio.noiseBurst(0.07, clamp(sp / 300, 0.03, 0.12), 1.4, "highpass", 900);
+            this.input.rumble(0.18, 70);
+          }
+        }
+      } else {
+        e.rattle = 0;
+      }
+
+      // --- name plates
+      if (e.tag) {
+        const show = this.settings.showNameTags && this.state !== "menu";
+        const d = this.camera.position.distanceTo(p.pos);
+        e.tag.visible = show && d < 110;
+        if (e.tag.visible) {
+          const k = clamp(d / 40, 0.75, 2.6);
+          e.tag.scale.set(4.2 * k, 1.05 * k, 1);
+          e.tag.position.y = 2.6 + k * 0.25;
+          (e.tag.material as THREE.SpriteMaterial).opacity = clamp((110 - d) / 30, 0.1, 0.85);
+        }
       }
 
       // --- boost sparks
@@ -1582,7 +1946,8 @@ export class Game {
     const boostKick = p.boosting ? 9 : 0;
     this.fovKick = damp(this.fovKick, boostKick, 6, dt);
     const airKick = p.grounded ? 0 : 3;
-    const targetFov = (mode === 2 ? 70 : 62) + speedFrac * 14 + this.fovKick + airKick;
+    const targetFov =
+      (mode === 2 ? 70 : 62) + this.settings.fovOffset + speedFrac * 14 + this.fovKick + airKick;
     this.fov = snap ? targetFov : damp(this.fov, targetFov, 3, dt);
     this.camera.fov = reduced ? lerp(this.fov, mode === 2 ? 70 : 64, 0.6) : this.fov;
     this.camera.updateProjectionMatrix();
@@ -1661,6 +2026,10 @@ export class Game {
       stuck: player.stuckTimer > 2.5,
       delta,
       sectorIndex: this.track.sectorOf(inLap),
+      draft: p.draft,
+      damage: p.damage,
+      revs: 0,
+      surface: p.surface,
     });
   }
 

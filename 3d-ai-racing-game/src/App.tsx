@@ -55,7 +55,13 @@ export default function App() {
   const screen = useGameStore((s) => s.screen);
   const loaded = useGameStore((s) => s.loaded);
   const fatal = useGameStore((s) => s.fatal);
+  const colorBlindSafe = useGameStore((s) => s.settings.colorBlindSafe);
   const [hideLoader, setHideLoader] = useState(false);
+
+  // Palette swap lives on <html> so plain CSS can override the token colours.
+  useEffect(() => {
+    document.documentElement.dataset.cbs = colorBlindSafe ? "1" : "0";
+  }, [colorBlindSafe]);
 
   // Unmount the loader only once its fade-out has finished.
   useEffect(() => {

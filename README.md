@@ -1,11 +1,12 @@
 # Sundown Rally
 
 A 3D desert rally game that runs entirely in the browser. Procedural terrain, four seeded
-circuits, three car classes, three AI rivals, drift-charged boost, ghost cars and a full
-sector-timing system — built with React 19, Vite 7, Tailwind 4 and three.js. No game engine,
-no downloaded assets: every mesh, texture and sound is generated at runtime.
+circuits plus an infinite Wildcard generator, three car classes, three AI rivals, a four-round
+championship, drift-charged boost, slipstreaming, launch control, damage, ghost cars and a
+full sector-timing system — built with React 19, Vite 7, Tailwind 4 and three.js. No game
+engine, no downloaded assets: every mesh, texture and sound is generated at runtime.
 
-The whole game ships as **one HTML file** (`dist/index.html`, ~1.2 MB / ~425 kB gzipped),
+The whole game ships as **one HTML file** (`dist/index.html`, ~1.2 MB / ~435 kB gzipped),
 fonts and all. Drop it anywhere, open it offline, it works.
 
 ```bash
@@ -32,6 +33,19 @@ driving well.
 - Every full meter banks a third of a tank. Spend it on the straights, or hold it for the
   last lap.
 
+**Off the line**
+
+The lights are a mini-game. Feather the throttle during the countdown to park the rev needle
+in the green band, and you launch with extra drive. Bury it and you light up the tyres; fall
+asleep and you watch three rivals disappear.
+
+**Running in traffic**
+
+Tuck in behind a rival and the slipstream chip lights up: less drag, more top speed, a real
+run into the next braking zone. Clout a cactus and the damage bar climbs — you lose top speed
+and steering bite until the bodywork shakes itself back together. The outer 60 cm of every
+circuit is a rumble strip: quick, noisy, and short on grip.
+
 **Clean laps**
 
 Each lap is split into three timed sectors with a gate at each boundary. Miss a gate — or sit
@@ -53,6 +67,9 @@ against your best lap and flashes each sector split as you cross it.
 | Pause            | `Esc` / `P`        | `Start`                   | Pause button                 |
 | Mute             | `M`                | —                         | Pause menu                   |
 
+Every keyboard binding in that table can be remapped under **Options → Keyboard** (click a
+binding, press a key); the defaults are one click away.
+
 Stuck against a rock? Tap respawn — or just wait, the game rescues you automatically after a
 few seconds of going nowhere. Gameplay keys are only swallowed while you are actually driving,
 so menus stay fully keyboard-navigable.
@@ -61,6 +78,11 @@ so menus stay fully keyboard-navigable.
 
 - **Race** — three AI rivals, 1 to 7 laps, three difficulty tiers (Rookie / Pro / Legend).
 - **Time trial** — you, the clock, and your own ghost replaying your best lap.
+- **Season** — a four-round championship over every circuit, alternating direction each round,
+  scoring 10 / 6 / 3 / 1. Standings are persisted, so you can finish the season tomorrow.
+
+Any circuit can also be driven **in reverse**, and the **Wildcard** tile rolls a brand-new
+circuit from a seed — reroll until you find one you like.
 
 ---
 
@@ -75,7 +97,8 @@ plus six liveries.
 
 **Tracks** · Four hand-seeded circuits (Sundown Loop, Mesa Switchback, Dune Runner, Coyote
 Canyon) generated from control-point radii through a centripetal Catmull-Rom spline, each with
-its own width, terrain and prop scatter.
+its own width, terrain and prop scatter — plus reverse layouts and an endless Wildcard
+generator that rolls shape, width and character from a seed.
 
 **AI** · Corner-speed-aware racing line with per-difficulty aggression, overtaking offsets,
 mistakes, stuck recovery, and positional engine audio. When the player finishes, rivals still
@@ -84,16 +107,18 @@ on track get their finish time extrapolated instead of a bogus DNF.
 **Timing** · Three sectors per lap, live delta, per-sector personal bests, lap records and race
 records keyed by track + mode + difficulty + lap count + car class, all persisted.
 
-**Presentation** · Golden-hour sky with ACES tonemapping, optional bloom, dust and smoke
-particles, persistent skid-mark decals, a rotating minimap, position-change toasts, and an
-SVG speedometer that doubles as a boost gauge.
+**Presentation** · Three times of day (golden hour, high noon, desert night with headlights
+and a procedural starfield), ACES tonemapping, optional bloom, dust, damage smoke and speed
+lines, persistent skid-mark decals, floating rival name plates, a rotating minimap,
+position-change toasts, and an SVG speedometer that doubles as a boost gauge.
 
 **Audio** · Entirely procedural WebAudio: engine with gear steps, tyre roll, skid, wind,
 impacts, countdown beeps and an adaptive music bed, on independent master and music buses.
 
-**Accessibility** · Reduced-motion support (OS-level and in-game), `aria-live` callouts for
-countdown, position and warnings, visible focus rings, pause on blur, adjustable steering
-sensitivity, and safe-area insets for notched phones.
+**Accessibility** · Reduced-motion support (OS-level and in-game), a colour-blind-safe
+palette, full key rebinding, an adjustable field of view, optional inverted steering,
+`aria-live` callouts for countdown, position and warnings, visible focus rings, pause on blur,
+adjustable steering sensitivity, and safe-area insets for notched phones.
 
 **Performance** · Four quality presets plus adaptive resolution that downgrades automatically
 when the frame budget slips, a precomputed terrain distance field, a spatial-hash broad phase
@@ -147,7 +172,7 @@ why it can be unit-tested in a plain Node environment.
 | `npm run typecheck`  | `tsc --noEmit`                                     |
 | `npm run lint`       | ESLint flat config (TS + react-hooks)              |
 | `npm run format`     | Prettier write (`format:check` in CI)              |
-| `npm test`           | Vitest (102 tests)                                 |
+| `npm test`           | Vitest (126 tests)                                 |
 | `npm run check`      | typecheck + lint + test                            |
 
 ## Testing

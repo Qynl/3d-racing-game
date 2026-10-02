@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
-import { SECTOR_COUNT, TRACKS, trackById } from "./config";
+import { SECTOR_COUNT, TRACKS, trackById, wildcardTrack } from "./config";
 import { Track } from "./track";
 
 const track = new Track(trackById("sundown"));
@@ -122,6 +122,65 @@ describe("Track queries", () => {
       for (const p of tr.points) {
         expect(Math.hypot(p.x, p.z)).toBeLessThan(260);
       }
+    }
+  });
+});
+
+describe("reversed circuits", () => {
+  const forward = new Track(trackById("sundown"));
+  const backward = new Track(trackById("sundown"), true);
+
+  it("keeps the same geometry budget", () => {
+    expect(backward.count).toBe(forward.count);
+    expect(backward.length).toBeCloseTo(forward.length, 3);
+    expect(backward.reversed).toBe(true);
+    expect(forward.reversed).toBe(false);
+  });
+
+  it("starts in the same place but drives the other way", () => {
+    expect(backward.points[0].x).toBeCloseTo(forward.points[0].x, 5);
+    expect(backward.points[0].z).toBeCloseTo(forward.points[0].z, 5);
+    const dot =
+      forward.tangents[0].x * backward.tangents[0].x + forward.tangents[0].z * backward.tangents[0].z;
+    expect(dot).toBeLessThan(-0.9);
+  });
+
+  it("flips the sign of the corners", () => {
+    let fSum = 0;
+    let bSum = 0;
+    for (let i = 0; i < forward.count; i++) {
+      fSum += Math.abs(forward.curvature[i]);
+      bSum += Math.abs(backward.curvature[i]);
+    }
+    // same amount of cornering, mirrored direction
+    expect(bSum).toBeCloseTo(fSum, 1);
+  });
+});
+
+describe("wildcard circuits", () => {
+  it("is deterministic for a seed", () => {
+    const a = wildcardTrack(42);
+    const b = wildcardTrack(42);
+    expect(a.radii).toEqual(b.radii);
+    expect(a.name).toBe("Wildcard #42");
+  });
+
+  it("rolls different shapes for different seeds", () => {
+    expect(wildcardTrack(1).radii).not.toEqual(wildcardTrack(2).radii);
+  });
+
+  it("stays inside sane bounds and builds a usable track", () => {
+    for (const seed of [1, 7, 99, 1234, 9999]) {
+      const def = wildcardTrack(seed);
+      expect(def.radii.length).toBeGreaterThanOrEqual(14);
+      for (const r of def.radii) {
+        expect(r).toBeGreaterThanOrEqual(80);
+        expect(r).toBeLessThanOrEqual(210);
+      }
+      expect(def.halfWidth).toBeGreaterThan(6);
+      const tr = new Track(def);
+      expect(tr.length).toBeGreaterThan(400);
+      expect(tr.sectorStarts.length).toBe(SECTOR_COUNT);
     }
   });
 });

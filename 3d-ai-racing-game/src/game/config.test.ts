@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  BINDABLE,
   CAR_CLASSES,
   CAR_COLORS,
+  DEFAULT_KEYBINDS,
   DIFFICULTIES,
   QUALITY_ORDER,
   QUALITY_PRESETS,
   SECTOR_COUNT,
   TRACKS,
   carClassById,
+  keyLabel,
   trackById,
 } from "./config";
 
@@ -127,5 +130,33 @@ describe("AI difficulties", () => {
       expect(d.lookahead).toBeGreaterThan(0.2);
       expect(d.name.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("key bindings", () => {
+  it("binds every listed action by default", () => {
+    for (const b of BINDABLE) {
+      expect(DEFAULT_KEYBINDS[b.id].length).toBeGreaterThan(0);
+      expect(b.label.length).toBeGreaterThan(2);
+    }
+    expect(Object.keys(DEFAULT_KEYBINDS).sort()).toEqual(BINDABLE.map((b) => b.id).sort());
+  });
+
+  it("never binds one key to two driving actions", () => {
+    const seen = new Set<string>();
+    for (const b of BINDABLE) {
+      for (const k of DEFAULT_KEYBINDS[b.id]) {
+        expect(seen.has(k)).toBe(false);
+        seen.add(k);
+      }
+    }
+  });
+
+  it("prints human-readable key names", () => {
+    expect(keyLabel(" ")).toBe("Space");
+    expect(keyLabel("arrowleft")).toBe("←");
+    expect(keyLabel("w")).toBe("W");
+    expect(keyLabel("escape")).toBe("Esc");
+    expect(keyLabel("shift")).toBe("Shift");
   });
 });

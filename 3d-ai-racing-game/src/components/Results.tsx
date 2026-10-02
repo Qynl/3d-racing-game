@@ -1,5 +1,5 @@
 import { gameHolder } from "../game/Game";
-import { trackById } from "../game/config";
+import { trackById, wildcardTrack } from "../game/config";
 import { formatShort, formatTime, ordinal, useGameStore } from "../game/store";
 import { cn } from "../utils/cn";
 
@@ -28,8 +28,10 @@ export default function Results() {
   }
 
   const timeTrial = results.mode === "timetrial";
+  const standings = results.standings ?? [];
   const head = HEADLINES[Math.min(4, results.position)];
-  const track = trackById(results.trackId);
+  const track =
+    results.trackId === "wildcard" ? wildcardTrack(settings.wildcardSeed) : trackById(results.trackId);
 
   const stats: [string, string][] = [
     ["Top speed", `${Math.round(results.topSpeed)} km/h`],
@@ -144,6 +146,57 @@ export default function Results() {
           </div>
         )}
 
+        {standings.length > 0 && (
+          <div className="mt-5">
+            <div className="mb-2 flex items-center justify-between text-[10px] uppercase tracking-[0.3em] text-cream/55">
+              <span>Championship standings</span>
+              {results.seasonRace && (
+                <span className="tracking-[0.2em] text-cream/40">
+                  Round {results.seasonRace.index} / {results.seasonRace.total}
+                </span>
+              )}
+            </div>
+            <div className="flex flex-col gap-1">
+              {standings.map((row, i) => (
+                <div
+                  key={row.name}
+                  className={cn(
+                    "flex items-center gap-3 rounded-lg px-3 py-1.5",
+                    row.isPlayer ? "bg-sand/15" : "bg-cream/5",
+                  )}
+                >
+                  <span className="font-display w-5 text-sm tabular-nums text-cream/50">{i + 1}</span>
+                  <span
+                    className="h-2.5 w-2.5 shrink-0 rounded-full"
+                    style={{ background: `#${row.color.toString(16).padStart(6, "0")}` }}
+                  />
+                  <span
+                    className={cn(
+                      "flex-1 truncate font-display text-base uppercase",
+                      row.isPlayer ? "text-sand" : "text-cream/85",
+                    )}
+                  >
+                    {row.name}
+                  </span>
+                  {row.gained > 0 && (
+                    <span className="text-[11px] uppercase tracking-[0.15em] text-juniper-bright">
+                      +{row.gained}
+                    </span>
+                  )}
+                  <span className="font-display w-10 text-right text-base tabular-nums text-cream">
+                    {row.points}
+                  </span>
+                </div>
+              ))}
+            </div>
+            {results.seasonDone && (
+              <div className="mt-2 text-sm text-sand">
+                Season complete — {standings[0]?.name} takes the title.
+              </div>
+            )}
+          </div>
+        )}
+
         {results.lapTimes.length > 0 && (
           <div className="mt-3 flex flex-wrap gap-2">
             {results.lapTimes.map((t, i) => (
@@ -161,12 +214,33 @@ export default function Results() {
         )}
 
         <div className="mt-6 flex flex-col gap-2 sm:flex-row">
+          {results.seasonRace && !results.seasonDone && (
+            <button
+              autoFocus
+              onClick={() => gameHolder.game?.nextSeasonRace()}
+              className="btn-primary flex-1 rounded-xl px-5 py-3 font-display text-xl font-extrabold uppercase tracking-wider"
+            >
+              Next round
+            </button>
+          )}
+          {results.seasonDone && (
+            <button
+              autoFocus
+              onClick={() => {
+                useGameStore.getState().endSeason();
+                gameHolder.game?.quitToMenu();
+              }}
+              className="btn-primary flex-1 rounded-xl px-5 py-3 font-display text-xl font-extrabold uppercase tracking-wider"
+            >
+              New season
+            </button>
+          )}
           <button
-            autoFocus
+            autoFocus={!results.seasonRace}
             onClick={() => gameHolder.game?.restart()}
             className="btn-primary flex-1 rounded-xl px-5 py-3 font-display text-xl font-extrabold uppercase tracking-wider"
           >
-            Race again
+            {results.seasonRace ? "Replay round" : "Race again"}
           </button>
           <button
             onClick={() => gameHolder.game?.quitToMenu()}

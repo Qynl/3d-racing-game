@@ -1,17 +1,23 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { gameHolder } from "../game/Game";
 import {
+  BINDABLE,
+  type BindAction,
   CAR_CLASSES,
   CAR_COLORS,
+  DEFAULT_KEYBINDS,
   DIFFICULTIES,
   QUALITY_ORDER,
   QUALITY_PRESETS,
   TRACKS,
   type QualityId,
+  keyLabel,
+  wildcardTrack,
 } from "../game/config";
 import {
   type Difficulty,
   type RaceMode,
+  type TimeOfDay,
   type TouchSteerMode,
   formatTime,
   raceKey,
@@ -33,7 +39,56 @@ const DIFFS: { id: Difficulty; label: string; desc: string }[] = (["rookie", "pr
 const MODES: { id: RaceMode; label: string; desc: string }[] = [
   { id: "race", label: "Race", desc: "3 AI rivals" },
   { id: "timetrial", label: "Time trial", desc: "You vs ghost" },
+  { id: "championship", label: "Season", desc: "4 rounds, points" },
 ];
+
+const TIMES: { id: TimeOfDay; label: string }[] = [
+  { id: "sunset", label: "Sunset" },
+  { id: "noon", label: "Noon" },
+  { id: "night", label: "Night" },
+];
+
+/** One rebindable control row. Click, then press any key. */
+function BindRow({
+  action,
+  label,
+  keys,
+  onBind,
+}: {
+  action: BindAction;
+  label: string;
+  keys: string[];
+  onBind: (action: BindAction, key: string) => void;
+}) {
+  const [listening, setListening] = useState(false);
+
+  useEffect(() => {
+    if (!listening) return;
+    const input = gameHolder.game?.input ?? null;
+    if (!input) return;
+    input.capturing = true;
+    input.onCapture = (key) => {
+      setListening(false);
+      onBind(action, key);
+    };
+    return () => {
+      input.capturing = false;
+      input.onCapture = null;
+    };
+  }, [listening, action, onBind]);
+
+  return (
+    <div className="flex items-center justify-between gap-3 py-1">
+      <span className="text-[11px] uppercase tracking-[0.18em] text-cream/60">{label}</span>
+      <button
+        onClick={() => setListening((v) => !v && !!gameHolder.game)}
+        className={cn("seg rounded-lg px-3 py-1 font-display text-sm", listening && "active")}
+      >
+        {listening ? "Press a key…" : keys.map(keyLabel).join(" / ")}
+      </button>
+    </div>
+  );
+}
 
 type Tab = "race" | "car" | "options";
 
@@ -55,6 +110,21 @@ export default function Menu() {
   const start = () => {
     if (!loaded) return;
     gameHolder.game?.startRace(useGameStore.getState().settings);
+  };
+
+  const season = useGameStore((s) => s.season);
+  const endSeason = useGameStore((s) => s.endSeason);
+  const wildcard = wildcardTrack(settings.wildcardSeed);
+
+  const rebind = (action: BindAction, key: string) => {
+    // Steal the key from any action that can spare it (never leave one unbound).
+    const next: Record<string, string[]> = {};
+    for (const b of BINDABLE) {
+      const cur = settings.keyBinds[b.id] ?? DEFAULT_KEYBINDS[b.id];
+      const stripped = cur.filter((k) => k !== key);
+      next[b.id] = b.id === action ? [key] : stripped.length ? stripped : cur;
+    }
+    apply({ keyBinds: next });
   };
 
   const rec = records[settings.trackId];
@@ -176,8 +246,76 @@ export default function Menu() {
                         </div>
                       </button>
                     ))}
+                    <button
+                      role="radio"
+                      aria-checked={settings.trackId === "wildcard"}
+                      onClick={() => {
+                        apply({ trackId: "wildcard" });
+                        void gameHolder.game?.changeTrack("wildcard");
+                      }}
+                      className={cn(
+                        "seg col-span-2 flex items-center justify-between rounded-xl px-3 py-2 text-left",
+                        settings.trackId === "wildcard" && "active",
+                      )}
+                    >
+                      <span>
+                        <span className="block font-display text-base font-bold uppercase leading-none">
+                          {wildcard.name}
+                        </span>
+                        <span className="mt-1 block text-[10px] uppercase tracking-[0.1em] opacity-70">
+                          {wildcard.subtitle} · {wildcard.grade}
+                        </span>
+                      </span>
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        aria-label="Roll a new wildcard circuit"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const seed = 1 + Math.floor(Math.random() * 9999);
+                          apply({ trackId: "wildcard", wildcardSeed: seed });
+                          void gameHolder.game?.changeTrack("wildcard");
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key !== "Enter" && e.key !== " ") return;
+                          e.stopPropagation();
+                          e.preventDefault();
+                          const seed = 1 + Math.floor(Math.random() * 9999);
+                          apply({ trackId: "wildcard", wildcardSeed: seed });
+                          void gameHolder.game?.changeTrack("wildcard");
+                        }}
+                        className="rounded-lg border border-cream/20 px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] hover:border-cream/50"
+                      >
+                        Reroll
+                      </span>
+                    </button>
+                  </div>
+                  <div className="mt-2">
+                    <Toggle
+                      label="Reverse direction"
+                      hint="Same circuit, mirrored corners"
+                      checked={settings.reverse}
+                      onChange={(reverse) => apply({ reverse })}
+                    />
                   </div>
                 </div>
+                {settings.mode === "championship" && (
+                  <div className="rounded-xl border border-sand/30 bg-sand/10 p-3 text-[11px] uppercase tracking-[0.18em] text-cream/70">
+                    {season && !season.done ? (
+                      <>
+                        Season in progress · round {season.raceIndex + 1} of {season.trackIds.length}
+                        <button
+                          onClick={() => endSeason()}
+                          className="ml-2 rounded border border-cream/25 px-2 py-0.5 text-[10px] hover:border-cream/60"
+                        >
+                          Reset
+                        </button>
+                      </>
+                    ) : (
+                      <>Four rounds, every circuit, points {"10/6/3/1"} — alternating direction.</>
+                    )}
+                  </div>
+                )}
                 {settings.mode === "race" && (
                   <div>
                     <Label>Rival difficulty</Label>
@@ -327,12 +465,69 @@ export default function Menu() {
                   checked={settings.showRacingLine}
                   onChange={(showRacingLine) => apply({ showRacingLine })}
                 />
+                <div>
+                  <Label>Time of day</Label>
+                  <Segmented
+                    ariaLabel="Time of day"
+                    columns={3}
+                    options={TIMES}
+                    value={settings.timeOfDay}
+                    onChange={(timeOfDay) => apply({ timeOfDay })}
+                  />
+                </div>
+                <Slider
+                  label="Field of view"
+                  min={-12}
+                  max={18}
+                  step={1}
+                  value={settings.fovOffset}
+                  display={`${settings.fovOffset > 0 ? "+" : ""}${settings.fovOffset}°`}
+                  onChange={(fovOffset) => apply({ fovOffset })}
+                />
+                <Toggle
+                  label="Invert steering"
+                  hint="Flip left and right"
+                  checked={settings.invertSteer}
+                  onChange={(invertSteer) => apply({ invertSteer })}
+                />
+                <Toggle
+                  label="Name tags"
+                  hint="Floating rival names"
+                  checked={settings.showNameTags}
+                  onChange={(showNameTags) => apply({ showNameTags })}
+                />
+                <Toggle
+                  label="Colour-blind safe"
+                  hint="Blue / orange instead of green / red"
+                  checked={settings.colorBlindSafe}
+                  onChange={(colorBlindSafe) => apply({ colorBlindSafe })}
+                />
                 <Toggle
                   label="Reduced motion"
                   hint="No camera shake or FOV pumping"
                   checked={settings.reducedMotion}
                   onChange={(reducedMotion) => apply({ reducedMotion })}
                 />
+                <div className="rounded-xl border border-cream/10 p-3">
+                  <div className="mb-1 flex items-center justify-between">
+                    <Label>Keyboard</Label>
+                    <button
+                      onClick={() => apply({ keyBinds: { ...DEFAULT_KEYBINDS } })}
+                      className="rounded border border-cream/20 px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] text-cream/60 hover:border-cream/50"
+                    >
+                      Defaults
+                    </button>
+                  </div>
+                  {BINDABLE.map((b) => (
+                    <BindRow
+                      key={b.id}
+                      action={b.id}
+                      label={b.label}
+                      keys={settings.keyBinds[b.id] ?? DEFAULT_KEYBINDS[b.id]}
+                      onBind={rebind}
+                    />
+                  ))}
+                </div>
                 {IS_TOUCH && (
                   <div>
                     <Label>Touch steering</Label>
@@ -368,7 +563,15 @@ export default function Menu() {
             className="btn-primary mt-4 flex w-full items-center justify-between rounded-xl px-5 py-3.5 font-display text-2xl font-extrabold uppercase tracking-wider disabled:opacity-60"
           >
             <span>
-              {loaded ? (settings.mode === "race" ? "Start race" : "Start time trial") : "Building…"}
+              {!loaded
+                ? "Building…"
+                : settings.mode === "race"
+                  ? "Start race"
+                  : settings.mode === "timetrial"
+                    ? "Start time trial"
+                    : season && !season.done
+                      ? `Round ${season.raceIndex + 1}`
+                      : "Start season"}
             </span>
             <span className="text-base opacity-80">→</span>
           </button>

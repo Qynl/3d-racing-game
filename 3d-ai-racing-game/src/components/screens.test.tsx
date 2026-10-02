@@ -50,6 +50,22 @@ describe("screens render without crashing", () => {
     expect(container.textContent?.toLowerCase()).toContain("go");
   });
 
+  it("shows the launch rev meter while the lights are on", () => {
+    reset({ screen: "countdown", hud: { ...defaultHud, countdown: 2, revs: 0.7 } });
+    const { container } = render(<HUD />);
+    const text = container.textContent?.toLowerCase() ?? "";
+    expect(text).toContain("launch revs");
+    expect(text).toContain("hold it");
+  });
+
+  it("shows slipstream and damage readouts when they are active", () => {
+    reset({ screen: "racing", hud: { ...defaultHud, draft: 0.8, damage: 0.7 } });
+    const { container } = render(<HUD />);
+    const text = container.textContent?.toLowerCase() ?? "";
+    expect(text).toContain("slipstream");
+    expect(text).toContain("damage");
+  });
+
   it("warns about wrong way and invalid laps", () => {
     reset({
       screen: "racing",
@@ -61,11 +77,47 @@ describe("screens render without crashing", () => {
     expect(text).toContain("lap");
   });
 
+  it("renders championship standings and a next-round button", () => {
+    reset({
+      screen: "finished",
+      settings: { ...defaultSettings, mode: "championship" },
+      results: {
+        position: 2,
+        standings: [
+          { name: "ATLAS", points: 16, isPlayer: false, color: 0x4f6b4a, gained: 10 },
+          { name: "YOU", points: 12, isPlayer: true, color: 0xc2553a, gained: 6 },
+        ],
+        seasonRace: { index: 2, total: 4 },
+        seasonDone: false,
+        totalTime: 120,
+        lapTimes: [60, 60],
+        bestLap: 60,
+        isRecordLap: false,
+        isRecordRace: false,
+        bestSectors: [20, 20, 20],
+        cars: [],
+        topSpeed: 190,
+        driftScore: 10,
+        airTime: 0.4,
+        cleanRace: true,
+        mode: "championship",
+        trackId: "sundown",
+      },
+    });
+    render(<Results />);
+    expect(screen.getByRole("button", { name: /next round/i })).toBeTruthy();
+    expect(screen.getByText(/round 2 \/ 4/i)).toBeTruthy();
+    expect(screen.getByText(/\+10/)).toBeTruthy();
+  });
+
   it("renders results with the finishing order", () => {
     reset({
       screen: "finished",
       results: {
         position: 1,
+        standings: null,
+        seasonRace: null,
+        seasonDone: false,
         totalTime: 182.5,
         lapTimes: [61.2, 60.5, 60.8],
         bestLap: 60.5,

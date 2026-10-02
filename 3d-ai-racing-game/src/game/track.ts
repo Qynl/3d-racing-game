@@ -22,8 +22,11 @@ export class Track {
   private grid = new Map<number, number[]>();
   private cell = 12;
 
-  constructor(def: TrackDef) {
+  readonly reversed: boolean;
+
+  constructor(def: TrackDef, reversed = false) {
     this.def = def;
+    this.reversed = reversed;
     this.halfWidth = def.halfWidth;
     const rand = mulberry32(def.seed);
     const radii = def.radii;
@@ -38,6 +41,13 @@ export class Track {
     const M = 1600;
     const pts = curve.getSpacedPoints(M);
     pts.pop();
+    if (reversed) {
+      // Drive the same ribbon the other way: keep sample 0 where it was so the
+      // grid, start line and minimap framing stay put, then flip the order.
+      const head = pts.shift()!;
+      pts.reverse();
+      pts.unshift(head);
+    }
     this.points = pts;
     this.count = M;
     this.length = curve.getLength();

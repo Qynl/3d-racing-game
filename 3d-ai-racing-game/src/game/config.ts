@@ -1,3 +1,5 @@
+import { mulberry32 } from "./noise";
+
 /**
  * Static game configuration: tracks, car classes, graphics presets.
  * Everything here is data — no three.js, no DOM — so it is cheap to import
@@ -309,6 +311,89 @@ export function guessQuality(): QualityId {
   if (mem <= 4 || cores <= 4) return "medium";
   if (mem >= 8 && cores >= 8) return "high";
   return "medium";
+}
+
+// ---------------------------------------------------------------- controls
+
+export type BindAction =
+  | "throttle"
+  | "brake"
+  | "left"
+  | "right"
+  | "handbrake"
+  | "boost"
+  | "lookBack"
+  | "respawn"
+  | "camera"
+  | "pause"
+  | "mute";
+
+export const BINDABLE: { id: BindAction; label: string }[] = [
+  { id: "throttle", label: "Throttle" },
+  { id: "brake", label: "Brake / reverse" },
+  { id: "left", label: "Steer left" },
+  { id: "right", label: "Steer right" },
+  { id: "handbrake", label: "Handbrake" },
+  { id: "boost", label: "Boost" },
+  { id: "lookBack", label: "Look back" },
+  { id: "respawn", label: "Respawn" },
+  { id: "camera", label: "Camera" },
+  { id: "pause", label: "Pause" },
+  { id: "mute", label: "Mute" },
+];
+
+export const DEFAULT_KEYBINDS: Record<BindAction, string[]> = {
+  throttle: ["w", "arrowup"],
+  brake: ["s", "arrowdown"],
+  left: ["a", "arrowleft"],
+  right: ["d", "arrowright"],
+  handbrake: [" "],
+  boost: ["shift"],
+  lookBack: ["b"],
+  respawn: ["r"],
+  camera: ["c"],
+  pause: ["escape", "p"],
+  mute: ["m"],
+};
+
+/** Pretty name for a raw `KeyboardEvent.key` value. */
+export function keyLabel(k: string): string {
+  if (k === " ") return "Space";
+  if (k.startsWith("arrow")) return { arrowup: "↑", arrowdown: "↓", arrowleft: "←", arrowright: "→" }[k] ?? k;
+  if (k === "escape") return "Esc";
+  if (k === "shift") return "Shift";
+  if (k === "control") return "Ctrl";
+  if (k.length === 1) return k.toUpperCase();
+  return k.charAt(0).toUpperCase() + k.slice(1);
+}
+
+// ---------------------------------------------------------------- wildcard circuits
+
+/**
+ * Builds a one-off circuit from a seed. Same generator as the hand-made
+ * circuits, just with the shape parameters rolled instead of authored.
+ */
+export function wildcardTrack(seed: number): TrackDef {
+  const rand = mulberry32(seed * 2654435761);
+  const n = 14 + Math.floor(rand() * 4);
+  const base = 118 + rand() * 54;
+  const chaos = 0.2 + rand() * 0.55;
+  const radii: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const wobble = Math.sin((i / n) * Math.PI * 2 * (1 + Math.floor(rand() * 3))) * chaos;
+    radii.push(Math.max(80, Math.min(210, base * (1 + wobble) * (0.88 + rand() * 0.26))));
+  }
+  const tight = radii.filter((r) => r < 110).length / n;
+  return {
+    id: "wildcard",
+    name: `Wildcard #${seed}`,
+    subtitle: tight > 0.35 ? "Rolled fresh — and nasty" : "Rolled fresh this session",
+    radii,
+    seed: seed * 7919 + 13,
+    halfWidth: 6.4 + rand() * 2.2,
+    stretch: [0.96 + rand() * 0.24, 0.88 + rand() * 0.22],
+    grade: tight > 0.35 ? "brutal" : chaos > 0.45 ? "technical" : "flowing",
+  };
 }
 
 // ---------------------------------------------------------------- misc

@@ -1,4 +1,5 @@
 import { CarInput } from "./car";
+import { type BindAction, DEFAULT_KEYBINDS } from "./config";
 import { clamp } from "./noise";
 
 export type InputAction = "pause" | "restart" | "respawn" | "camera" | "mute" | "confirm" | "back";
@@ -43,6 +44,12 @@ export class InputManager {
   /** When false we never call preventDefault — keeps menus keyboard-accessible. */
   captureKeys = false;
 
+  /** Active key map — replaced whenever the player rebinds something. */
+  binds: Record<BindAction, string[]> = { ...DEFAULT_KEYBINDS };
+  /** While true, keys are swallowed and handed to `onCapture` instead. */
+  capturing = false;
+  onCapture: ((key: string) => void) | null = null;
+
   onAction: ((action: InputAction) => void) | null = null;
   onGamepadChange: ((connected: boolean) => void) | null = null;
 
@@ -51,22 +58,54 @@ export class InputManager {
   private padIndex: number | null = null;
   private prevPadButtons: boolean[] = [];
 
+  /** Installs a (possibly partial) custom key map. */
+  setBinds(binds: Partial<Record<BindAction, string[]>> | undefined) {
+    const next = { ...DEFAULT_KEYBINDS };
+    if (binds) {
+      for (const key of Object.keys(DEFAULT_KEYBINDS) as BindAction[]) {
+        const v = binds[key];
+        if (Array.isArray(v) && v.length) next[key] = v;
+      }
+    }
+    this.binds = next;
+    this.swallow = new Set(Object.values(next).flat());
+  }
+
+  private swallow = new Set<string>(Object.values(DEFAULT_KEYBINDS).flat());
+
+  private held(action: BindAction): boolean {
+    for (const k of this.binds[action]) if (this.keys.has(k)) return true;
+    return false;
+  }
+
+  private isBound(action: BindAction, key: string): boolean {
+    return this.binds[action].includes(key);
+  }
+
   private onKeyDown = (e: KeyboardEvent) => {
     const k = e.key.toLowerCase();
+    if (this.capturing) {
+      e.preventDefault();
+      if (k !== "tab") {
+        this.capturing = false;
+        this.onCapture?.(k);
+      }
+      return;
+    }
     const target = e.target as HTMLElement | null;
     const typing =
       !!target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
     if (typing) return;
     // Only swallow gameplay keys while actually driving, so menus stay usable
     // (space/enter must keep activating focused buttons).
-    if (this.captureKeys && KEYS_TO_SWALLOW.has(k)) e.preventDefault();
+    if (this.captureKeys && (KEYS_TO_SWALLOW.has(k) || this.swallow.has(k))) e.preventDefault();
     if (e.repeat) return;
     this.keys.add(k);
     if (k === "escape") this.onAction?.(this.captureKeys ? "pause" : "back");
-    else if (k === "p") this.onAction?.("pause");
-    else if (k === "r") this.onAction?.(this.captureKeys ? "respawn" : "restart");
-    else if (k === "c") this.onAction?.("camera");
-    else if (k === "m") this.onAction?.("mute");
+    else if (this.isBound("pause", k)) this.onAction?.("pause");
+    else if (this.isBound("respawn", k)) this.onAction?.(this.captureKeys ? "respawn" : "restart");
+    else if (this.isBound("camera", k)) this.onAction?.("camera");
+    else if (this.isBound("mute", k)) this.onAction?.("mute");
     else if (k === "enter" && !this.captureKeys) {
       // Let Enter activate a focused button instead of double-firing.
       const active = document.activeElement;
@@ -175,16 +214,15 @@ export class InputManager {
   }
 
   read(dt: number, opts: ReadOptions): CarInput {
-    const k = this.keys;
     const sens = opts.sensitivity;
     let steerTarget = 0;
-    if (k.has("arrowleft") || k.has("a") || this.touch.left) steerTarget -= 1;
-    if (k.has("arrowright") || k.has("d") || this.touch.right) steerTarget += 1;
-    let throttle = k.has("arrowup") || k.has("w") || this.touch.gas ? 1 : 0;
-    let brake = k.has("arrowdown") || k.has("s") || this.touch.brake ? 1 : 0;
-    let handbrake = k.has(" ") || this.touch.handbrake;
-    let boost = k.has("shift") || this.touch.boost;
-    this.lookBack = k.has("b");
+    if (this.held("left") || this.touch.left) steerTarget -= 1;
+    if (this.held("right") || this.touch.right) steerTarget += 1;
+    let throttle = this.held("throttle") || this.touch.gas ? 1 : 0;
+    let brake = this.held("brake") || this.touch.brake ? 1 : 0;
+    let handbrake = this.held("handbrake") || this.touch.handbrake;
+    let boost = this.held("boost") || this.touch.boost;
+    this.lookBack = this.held("lookBack");
 
     let analog = false;
     if (this.touch.axis !== null) {

@@ -306,6 +306,8 @@ export function tuningFromClass(def: CarClassDef): CarTuning {
   };
 }
 
+export type Surface = "track" | "rumble" | "sand";
+
 export const REVERSE_MAX = 12;
 
 export class CarPhysics {
@@ -332,6 +334,19 @@ export class CarPhysics {
   landingImpact = 0;
   /** Set for one frame when the car leaves the ground. */
   justLaunched = false;
+
+  /** Which surface the tyres are on right now. */
+  surface: Surface = "track";
+  /** 0..1 rumble-strip rattle, scaled by speed. */
+  rumble = 0;
+  /** 0..1 slipstream from the car ahead, written by the race loop. */
+  draft = 0;
+  /** 0..1 accumulated damage. Costs top speed and steering until it repairs. */
+  damage = 0;
+  /** Decaying launch assist granted by a well-timed start. */
+  launchAssist = 0;
+  /** Seconds of bogged-down engine after a botched launch. */
+  bog = 0;
 
   // boost + drift
   boost = 0; // 0..1 of tank
@@ -402,8 +417,28 @@ export class CarPhysics {
     this.suspension = 0;
   }
 
+  /** Reward for leaving the line in the sweet spot of the rev range. */
+  applyLaunch(quality: number) {
+    this.launchAssist = clamp(quality, 0, 1);
+  }
+
+  /** Flooded or bogged engine after a botched start. */
+  applyBog(seconds: number) {
+    this.bog = Math.max(this.bog, seconds);
+  }
+
+  /** Accumulate body damage from an impact. */
+  addDamage(amount: number) {
+    this.damage = clamp(this.damage + amount, 0, 1);
+  }
+
   /** Full reset of per-race accumulators. */
   resetRaceState() {
+    this.damage = 0;
+    this.draft = 0;
+    this.rumble = 0;
+    this.launchAssist = 0;
+    this.bog = 0;
     this.boost = 0;
     this.boosting = false;
     this.driftScore = 0;
@@ -427,7 +462,7 @@ export class CarPhysics {
     // ---- steering -> yaw (much less authority in the air)
     const sp = Math.abs(this.speedF);
     const steerFactor = clamp(sp / 6, 0, 1) / (1 + sp / 55);
-    let yawRate = input.steer * T.steer * steerFactor * (airborne ? 0.3 : 1);
+    let yawRate = input.steer * T.steer * steerFactor * (airborne ? 0.3 : 1) * (1 - this.damage * 0.14);
     if (input.handbrake && !airborne) yawRate *= 1.3;
     if (this.speedF < -0.5) yawRate = -yawRate;
     this.yaw -= yawRate * dt;
@@ -438,17 +473,39 @@ export class CarPhysics {
     let vR = this.vel.dot(rgt);
 
     // ---- surface
-    const onTrack = this.trackDist < track.halfWidth + 0.9;
+    const hw = track.halfWidth;
+    const onTrack = this.trackDist < hw + 0.9;
     this.onTrack = onTrack;
+    // The outer 0.6 m of the ribbon is a rumble strip: still grippy, but it
+    // rattles the car and unsettles the rear.
+    const onRumble = onTrack && this.trackDist > hw - 0.6;
+    this.surface = onTrack ? (onRumble ? "rumble" : "track") : "sand";
+    this.rumble = onRumble && !airborne ? clamp(Math.abs(this.speedF) / 26, 0, 1) : 0;
+    // Damage repairs itself slowly — a rally car gets patched between corners.
+    if (this.damage > 0) this.damage = Math.max(0, this.damage - dt * 0.013);
+    if (this.bog > 0) this.bog = Math.max(0, this.bog - dt);
+    if (this.launchAssist > 0) this.launchAssist = Math.max(0, this.launchAssist - dt * 1.1);
     const boostActive = input.boost && this.boost > 0.001 && !airborne;
     this.boosting = boostActive;
-    const maxSp = T.topSpeed * (onTrack ? 1 : 0.62) * (boostActive ? 1.22 : 1);
+    const maxSp =
+      T.topSpeed *
+      (onTrack ? 1 : 0.62) *
+      (boostActive ? 1.22 : 1) *
+      (1 + this.draft * 0.08) *
+      (1 - this.damage * 0.16);
 
     let aF = 0;
     if (!airborne) {
       if (input.throttle > 0) {
         const ratio = clamp(vF / maxSp, 0, 1);
-        aF += input.throttle * T.engine * (1 - ratio * ratio * ratio) * (onTrack ? 1 : 0.8);
+        aF +=
+          input.throttle *
+          T.engine *
+          (1 - ratio * ratio * ratio) *
+          (onTrack ? 1 : 0.8) *
+          (this.bog > 0 ? 0.42 : 1);
+        // A clean launch keeps pulling for the first second or so.
+        if (this.launchAssist > 0) aF += T.engine * 0.55 * this.launchAssist * input.throttle;
       }
       this.braking = false;
       if (input.brake > 0) {
@@ -466,7 +523,7 @@ export class CarPhysics {
         if (this.boost < 1e-4) this.boost = 0;
       }
       // drag + rolling resistance
-      aF -= vF * (onTrack ? 0.12 : 0.55);
+      aF -= vF * (onTrack ? 0.12 * (1 - this.draft * 0.5) : 0.55);
       if (Math.abs(vF) > 0.05) aF -= Math.sign(vF) * (onTrack ? 0.8 : 2.5);
       if (input.handbrake) aF -= vF * 0.6;
       // slope
@@ -479,7 +536,8 @@ export class CarPhysics {
     }
 
     // ---- lateral grip
-    const gripRate = airborne ? 0.25 : input.handbrake ? T.grip * 0.22 : onTrack ? T.grip : T.grip * 0.47;
+    const surfaceGrip = onTrack ? (onRumble ? T.grip * 0.86 : T.grip) : T.grip * 0.47;
+    const gripRate = airborne ? 0.25 : input.handbrake ? T.grip * 0.22 : surfaceGrip;
     vR *= Math.exp(-gripRate * dt);
 
     vF += aF * dt;

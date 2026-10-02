@@ -193,3 +193,33 @@ honest about the two places where the fix differs from the suggestion.
 - ✅ Car disposal is a single shared helper; dead fields (`lastYawRate`, `lastAccel`, unused `hemi`/`compressor`) removed.
 - ✅ `Terrain.trackDist` is released after use.
 - ℹ️ `Track.signedLateral` was kept — it is small, unit-tested, and the natural companion to `distanceToTrack`.
+
+## §6 Depth pass (post-audit)
+
+The audit list was the floor, not the ceiling. A second gameplay pass added the systems the
+game was still missing:
+
+- ✅ **Launch control.** The countdown is now a mini-game: a rev meter fills while you hold
+  the throttle, and the lights grade you — perfect launch (bonus drive), good, slow away, or
+  wheelspin (engine bogs for 0.7 s). Rivals roll their own starts, scaled by difficulty.
+- ✅ **Slipstream.** Any car tucked within ~24 m and roughly aligned behind another gets up to
+  half its aerodynamic drag removed and +8% top speed, smoothed in and out. Shown on the HUD.
+- ✅ **Damage.** Impacts accumulate 0..1 damage that costs top speed (−16% at full) and
+  steering authority (−14%), smokes above 0.45, and self-repairs at ~1.3%/s so a bad lap is
+  not a dead race.
+- ✅ **Rumble strips.** The outer 60 cm of every circuit is a grip-penalised strip (×0.86) with
+  camera rattle, a filtered noise burst and gamepad buzz — fast, but it bites.
+- ✅ **Reverse layouts and Wildcard circuits.** Every circuit can be driven backwards, and a
+  seeded generator rolls brand-new circuits (shape, width, character) on demand.
+- ✅ **Championship.** A four-round season over every circuit, alternating direction, scoring
+  10/6/3/1, with standings persisted separately from settings and records.
+- ✅ **Time of day.** Golden hour, high noon and a desert night with headlight spots,
+  emissive lamps, a procedural starfield and retuned exposure/fog — switchable live, no
+  rebuild.
+- ✅ **Presentation.** Floating rival name plates, velocity speed lines, damage smoke, a
+  launch rev meter and a slipstream/damage readout on the HUD.
+- ✅ **UX.** Full key rebinding, field-of-view slider, inverted steering, a colour-blind-safe
+  palette, and name-tag/time-of-day toggles — all persisted.
+
+Test coverage grew with the features: **126 unit tests** across physics, track generation
+(including reverse and Wildcard), store/season persistence, bindings and the React screens.
