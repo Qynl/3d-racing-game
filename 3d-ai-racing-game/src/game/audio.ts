@@ -37,6 +37,8 @@ export class AudioEngine {
 
   private voices: EngineVoice[] = [];
   private windGain: GainNode | null = null;
+  private weatherGain: GainNode | null = null;
+  private weatherFilter: BiquadFilterNode | null = null;
   private skidGain: GainNode | null = null;
   private boostGain: GainNode | null = null;
   private boostFilter: BiquadFilterNode | null = null;
@@ -110,6 +112,21 @@ export class AudioEngine {
     wind.connect(windFilter).connect(windGain).connect(sfx);
     wind.start();
     this.windGain = windGain;
+
+    // --- weather bed (rain hiss / blowing sand), gated by gain
+    const weather = ctx.createBufferSource();
+    weather.buffer = this.noiseBuffer;
+    weather.loop = true;
+    const weatherFilter = ctx.createBiquadFilter();
+    weatherFilter.type = "bandpass";
+    weatherFilter.frequency.value = 4200;
+    weatherFilter.Q.value = 0.4;
+    const weatherGain = ctx.createGain();
+    weatherGain.gain.value = 0;
+    weather.connect(weatherFilter).connect(weatherGain).connect(sfx);
+    weather.start();
+    this.weatherGain = weatherGain;
+    this.weatherFilter = weatherFilter;
 
     // --- skid
     const skid = ctx.createBufferSource();
@@ -333,6 +350,17 @@ export class AudioEngine {
     if (this.boostFilter) {
       this.boostFilter.frequency.setTargetAtTime(700 + sp * 18, t, 0.1);
     }
+  }
+
+  /**
+   * Continuous weather bed. `level` is 0..1; `bright` picks rain (high, hissy)
+   * over blowing sand (low, roaring).
+   */
+  setWeatherBed(level: number, bright: boolean) {
+    if (!this.ctx || !this.weatherGain) return;
+    const t = this.ctx.currentTime;
+    this.weatherGain.gain.setTargetAtTime(Math.max(0, Math.min(0.3, level)), t, 0.6);
+    this.weatherFilter?.frequency.setTargetAtTime(bright ? 4600 : 700, t, 0.6);
   }
 
   silenceEngines() {

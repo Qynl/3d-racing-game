@@ -38,16 +38,22 @@ import { buildProps, type Collider } from "./props";
 import { SkidMarks } from "./skidmarks";
 import {
   CloudField,
+  HORIZON_COLOR,
   type LightRig,
   SKIES,
   SUN_DIR,
   type SkyPalette,
   type TimeOfDayId,
+  WEATHERS,
+  type WeatherDef,
+  type WeatherId,
   applySkyPalette,
   createClouds,
   createLighting,
   createSkyDome,
 } from "./sky";
+import { Precipitation } from "./weather";
+import { computePayout } from "./economy";
 import {
   type RaceResults,
   type Screen,
@@ -61,7 +67,14 @@ import { Terrain, WORLD_RADIUS } from "./terrain";
 import { ColliderGrid } from "./collision";
 import type { MinimapBounds, MinimapScene } from "./minimap";
 import { computeMinimapBounds, drawMinimap } from "./minimap";
-import { Track, buildRacingLine, buildStartLine, buildTrackMesh } from "./track";
+import {
+  type StartGantry,
+  Track,
+  buildRacingLine,
+  buildStartGantry,
+  buildStartLine,
+  buildTrackMesh,
+} from "./track";
 
 interface CarEntity {
   physics: CarPhysics;
@@ -94,6 +107,8 @@ interface CarEntity {
   rattle: number;
   /** Damage smoke emitter accumulator. */
   smokeAcc: number;
+  /** Wet-weather spray accumulator. */
+  sprayAcc: number;
   headlights: THREE.SpotLight | null;
 }
 
@@ -145,9 +160,12 @@ export class Game {
   sun!: THREE.DirectionalLight;
   lights!: LightRig;
   palette: SkyPalette = SKIES.sunset;
+  weather: WeatherDef = WEATHERS.clear;
+  precip!: Precipitation;
   particles!: ParticleSystem;
   skid!: SkidMarks;
   racingLine: THREE.Mesh | null = null;
+  gantry: StartGantry | null = null;
   audio = new AudioEngine();
   input = new InputManager();
   quality!: QualityPreset;
@@ -283,6 +301,8 @@ export class Game {
     const getH = (x: number, z: number) => this.terrain.getHeight(x, z);
     scene.add(buildTrackMesh(this.track, getH));
     scene.add(buildStartLine(this.track, getH));
+    this.gantry = buildStartGantry(this.track, getH);
+    scene.add(this.gantry.group);
     this.racingLine = buildRacingLine(this.track, getH);
     this.racingLine.visible = this.settings.showRacingLine;
     scene.add(this.racingLine);
@@ -306,8 +326,12 @@ export class Game {
       palette: this.palette,
     });
     this.sun = this.lights.sun;
-    applySkyPalette(this.sky, this.palette);
+    this.weather = this.rollWeather();
+    applySkyPalette(this.sky, this.palette, this.weather);
+    this.lights.apply(this.palette, this.weather);
 
+    this.precip = new Precipitation(2600);
+    scene.add(this.precip.points);
     this.particles = new ParticleSystem(q.particles);
     scene.add(this.particles.points);
     this.skid = new SkidMarks(q.skidSegments);
@@ -331,6 +355,8 @@ export class Game {
     this.loadGhostForTrack();
     this.createCars();
     this.placeOnGrid();
+    // Fog, precipitation, headlights and the audio bed for the saved settings.
+    this.applyTimeOfDay(this.settings.timeOfDay, this.weather);
     this.updateMenuCamera(10);
     this.updateMenuCamera(10);
 
@@ -444,27 +470,48 @@ export class Game {
     return trackId === "wildcard" ? wildcardTrack(this.settings.wildcardSeed) : trackById(trackId);
   }
 
-  /** Repaints the world for a different time of day. Cheap — no rebuild. */
-  applyTimeOfDay(id: TimeOfDayId) {
+  /** Resolves the weather setting, rolling the dice when it is "random". */
+  private rollWeather(): WeatherDef {
+    const want = this.settings.weather;
+    if (want === "random") {
+      // Clear weather stays the most likely outcome; storms are an event.
+      const table: WeatherId[] = ["clear", "clear", "clear", "overcast", "overcast", "rain", "sandstorm"];
+      return WEATHERS[table[Math.floor(Math.random() * table.length)]];
+    }
+    return WEATHERS[want] ?? WEATHERS.clear;
+  }
+
+  /** Repaints the world for a different time of day / weather. No rebuild. */
+  applyTimeOfDay(id: TimeOfDayId, weather: WeatherDef = this.weather) {
     const p = SKIES[id] ?? SKIES.sunset;
     this.palette = p;
-    applySkyPalette(this.sky, p);
-    this.lights.apply(p);
-    this.renderer.toneMappingExposure = p.exposure;
-    this.scene.environmentIntensity = p.envIntensity;
-    (this.scene.background as THREE.Color).set(p.horizon);
+    this.weather = weather;
+    applySkyPalette(this.sky, p, weather);
+    this.lights.apply(p, weather);
+    this.renderer.toneMappingExposure = p.exposure * (weather.id === "clear" ? 1 : 1.04);
+    this.scene.environmentIntensity = p.envIntensity * weather.lightScale;
+    (this.scene.background as THREE.Color).copy(HORIZON_COLOR);
     const fog = this.scene.fog as THREE.Fog | null;
     if (fog) {
-      fog.color.set(p.horizon);
-      fog.near = p.id === "night" ? 60 : 100;
+      fog.color.copy(HORIZON_COLOR);
+      fog.near = (p.id === "night" ? 60 : 100) * weather.fogScale;
+      fog.far = this.quality.viewDistance * weather.fogScale;
     }
+    this.precip.configure(weather, this.camera.position);
+    this.audio.setWeatherBed(
+      weather.precip > 0 ? (weather.id === "rain" ? 0.18 : 0.22) : 0,
+      weather.id === "rain",
+    );
+    this.clouds.group.visible = weather.id !== "sandstorm";
     for (const c of this.cars) this.applyCarLights(c);
-    if (this.ghostVisual) this.ghostVisual.headMat.emissiveIntensity = p.headlights ? 2 : 0.4;
+    if (this.ghostVisual) {
+      this.ghostVisual.headMat.emissiveIntensity = p.headlights || weather.lightScale < 0.7 ? 2 : 0.4;
+    }
   }
 
   /** Headlight beam + lamp glow for one car, matching the current sky. */
   private applyCarLights(e: CarEntity) {
-    const on = this.palette.headlights;
+    const on = this.palette.headlights || this.weather.lightScale < 0.7;
     e.visual.headMat.emissive.set(0xfff0cc);
     e.visual.headMat.emissiveIntensity = on ? 3.4 : 0.35;
     const isPlayer = e === this.player;
@@ -550,7 +597,12 @@ export class Game {
   ): CarEntity {
     const visual = buildCarVisual(color, num, { classId });
     this.scene.add(visual.root);
-    const tuning = tuningFromClass(carClassById(classId));
+    // Only the player's car carries garage upgrades; rivals use the reference
+    // tuning below so difficulty stays the difficulty you picked.
+    const tuning = tuningFromClass(
+      carClassById(classId),
+      ai ? undefined : useGameStore.getState().upgradesFor(classId),
+    );
     if (ai) {
       // Rivals use the reference tuning so difficulty stays meaningful whatever
       // the player picked.
@@ -586,6 +638,7 @@ export class Game {
       tag: null,
       rattle: 0,
       smokeAcc: 0,
+      sprayAcc: 0,
       headlights: null,
     };
   }
@@ -670,6 +723,7 @@ export class Game {
       e.stuckTimer = 0;
       e.rattle = 0;
       e.smokeAcc = 0;
+      e.sprayAcc = 0;
       e.physics.syncVisual(e.visual, this.time);
     });
   }
@@ -703,7 +757,7 @@ export class Game {
 
     // tear down world objects (keep renderer/scene/camera)
     this.destroyCars();
-    for (const name of ["terrain", "track", "racingLine", "props", "startLine"]) {
+    for (const name of ["terrain", "track", "racingLine", "props", "startLine", "gantry"]) {
       const obj = this.scene.getObjectByName(name);
       if (obj) {
         this.scene.remove(obj);
@@ -723,6 +777,9 @@ export class Game {
     const tm = buildTrackMesh(this.track, getH);
     this.scene.add(tm);
     this.scene.add(buildStartLine(this.track, getH));
+    this.gantry?.dispose();
+    this.gantry = buildStartGantry(this.track, getH);
+    this.scene.add(this.gantry.group);
     this.racingLine = buildRacingLine(this.track, getH);
     this.racingLine.visible = this.settings.showRacingLine;
     this.scene.add(this.racingLine);
@@ -795,6 +852,13 @@ export class Game {
 
   private beginRace(settings: Settings) {
     this.settings = settings;
+    const rolled = this.rollWeather();
+    if (rolled.id !== this.weather.id || settings.timeOfDay !== this.palette.id) {
+      this.applyTimeOfDay(settings.timeOfDay, rolled);
+      if (settings.weather === "random") {
+        useGameStore.getState().pushToast({ text: `${rolled.name} conditions`, kind: "info" });
+      }
+    }
     this.totalLaps = settings.laps;
     this.cameraMode = settings.cameraMode;
     this.quality = QUALITY_PRESETS[settings.quality] ?? this.quality;
@@ -887,15 +951,25 @@ export class Game {
     if (this.ghostVisual) this.ghostVisual.root.visible = false;
   }
 
+  /** Rebuilds the cars so new garage upgrades take effect immediately. */
+  refreshCars() {
+    if (this.state !== "menu") return;
+    this.createCars();
+    this.placeOnGrid();
+  }
+
   applySettings(settings: Settings) {
     const prevQuality = this.settings.quality;
     const prevLine = this.settings.showRacingLine;
     const prevTod = this.settings.timeOfDay;
+    const prevWeather = this.settings.weather;
     const prevReverse = this.settings.reverse;
     const prevSeed = this.settings.wildcardSeed;
     this.settings = settings;
     this.input.setBinds(settings.keyBinds);
-    if (prevTod !== settings.timeOfDay) this.applyTimeOfDay(settings.timeOfDay);
+    if (prevTod !== settings.timeOfDay || prevWeather !== settings.weather) {
+      this.applyTimeOfDay(settings.timeOfDay, this.rollWeather());
+    }
     if (
       this.state === "menu" &&
       (prevReverse !== settings.reverse ||
@@ -1025,6 +1099,9 @@ export class Game {
     this.clouds.update(dt);
     this.sky.position.copy(this.camera.position);
     this.skid.update(dt);
+    this.precip.update(dt, this.camera.position);
+    const grip = this.weather.grip;
+    for (const c of this.cars) c.physics.conditionGrip = grip;
 
     if (this.state === "menu") {
       for (const c of this.cars) if (c.tag) c.tag.visible = false;
@@ -1042,6 +1119,7 @@ export class Game {
         this.lastCountdownNumber = num;
         if (num >= 1 && num <= 3) {
           this.audio.countdownTick();
+          this.gantry?.setLights(num);
           useGameStore.getState().setHud({ countdown: num });
         }
       }
@@ -1072,6 +1150,7 @@ export class Game {
         this.goTimer = 1.1;
         useGameStore.getState().setScreen("racing");
         useGameStore.getState().setHud({ countdown: 0 });
+        this.gantry?.setLights(0);
         this.audio.countdownGo();
         this.audio.setMusicIntensity(0.85);
         this.input.rumble(0.5, 220);
@@ -1086,7 +1165,10 @@ export class Game {
     if (this.state === "racing") this.raceTime += dt;
     if (this.goTimer > 0) {
       this.goTimer -= dt;
-      if (this.goTimer <= 0) useGameStore.getState().setHud({ countdown: -1 });
+      if (this.goTimer <= 0) {
+        useGameStore.getState().setHud({ countdown: -1 });
+        this.gantry?.setLights(-1);
+      }
     }
     this.stepSimulation(dt);
     this.updateProgress(dt);
@@ -1220,8 +1302,12 @@ export class Game {
 
     const allPhysics = this.cars.map((c) => c.physics);
     const diff = DIFFICULTIES[this.settings.difficulty];
+    // Rivals respect the conditions too: corner speed scales with the square
+    // root of grip, which is what the physics actually gives them.
+    const gripScale = Math.sqrt(this.weather.grip);
     for (const e of this.cars) {
       if (!e.ai) continue;
+      e.ai.params.cornerGrip = diff.cornerGrip * gripScale;
       const gapUnits = (player.unwrapped - e.unwrapped) * this.track.spacing;
       e.ai.speedScale = player.finished ? 1 : 1 + clamp(gapUnits / 650, -0.05, 0.06) * diff.rubber;
       e.input = e.ai.update(e.physics, allPhysics, dt, this.time, this.raceTime > 0.1);
@@ -1631,11 +1717,30 @@ export class Game {
       seasonDone = useGameStore.getState().season?.done ?? false;
     }
 
+    const seasonWon = seasonDone && standings.length > 0 && standings[0].isPlayer;
+    const credits = computePayout({
+      mode: this.settings.mode,
+      position,
+      carCount: this.cars.length,
+      laps: player.lapTimes.length,
+      difficulty: this.settings.difficulty,
+      weather: this.weather.id,
+      cleanRace: player.lapTimes.length >= this.totalLaps,
+      driftScore: player.physics.driftScore,
+      airTime: player.physics.totalAirTime,
+      newLapRecord: beaten.lap,
+      newRaceRecord: beaten.race,
+      seasonFinished: seasonDone,
+      seasonWon,
+    });
+
     const results: RaceResults = {
       position,
       standings,
       seasonRace,
       seasonDone,
+      credits,
+      weather: this.weather.id,
       totalTime: total,
       lapTimes: [...player.lapTimes],
       bestLap,
@@ -1662,6 +1767,11 @@ export class Game {
     };
     store.setResults(results);
     if (beaten.race || beaten.lap) this.audio.recordChime();
+    if (results.credits && results.credits.total > 0) {
+      store.awardCredits(results.credits.total, {
+        won: position === 1 && this.settings.mode !== "timetrial",
+      });
+    }
   }
 
   // ---------------------------------------------------------------- ghost
@@ -1713,6 +1823,29 @@ export class Game {
         if (e.input.throttle > 0.5 && sp < 18 && sp > 0.3) rate += 26;
         if (e.input.handbrake && sp > 6) rate += 20;
         if (p.boosting) rate += 24;
+      }
+      // Wet tarmac throws spray, not dust.
+      const wetness = this.weather.id === "rain" ? 1 : 0;
+      if (wetness > 0) rate *= p.onTrack ? 0.55 : 0.75;
+      if (wetness > 0 && p.grounded && sp > 6) {
+        e.sprayAcc += sp * 1.6 * dt;
+        while (e.sprayAcc >= 1) {
+          e.sprayAcc -= 1;
+          const side = Math.random() < 0.5 ? -0.95 : 0.95;
+          this.particles.emit(
+            p.pos.x - fwd.x * 1.7 + rgt.x * side,
+            p.pos.y + 0.22,
+            p.pos.z - fwd.z * 1.7 + rgt.z * side,
+            -fwd.x * (2 + sp * 0.12) + (Math.random() - 0.5) * 1.2,
+            0.5 + Math.random() * 1.1,
+            -fwd.z * (2 + sp * 0.12) + (Math.random() - 0.5) * 1.2,
+            0.22 + Math.random() * 0.3,
+            0.5 + Math.random() * 0.5,
+            0.9,
+            0xdfe9f2,
+            0.33,
+          );
+        }
       }
       e.dustAcc += rate * dt;
       if (e.dustAcc >= 1) {
@@ -2028,6 +2161,8 @@ export class Game {
       sectorIndex: this.track.sectorOf(inLap),
       draft: p.draft,
       damage: p.damage,
+      conditions: this.weather.id === "clear" ? "" : this.weather.name,
+      lowGrip: this.weather.grip < 0.95,
       revs: 0,
       surface: p.surface,
     });
@@ -2050,6 +2185,8 @@ export class Game {
   // ---------------------------------------------------------------- teardown
 
   dispose() {
+    this.precip.dispose();
+    this.gantry?.dispose();
     this.disposed = true;
     cancelAnimationFrame(this.raf);
     window.removeEventListener("resize", this.onResize);

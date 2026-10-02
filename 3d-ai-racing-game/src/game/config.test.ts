@@ -5,14 +5,21 @@ import {
   CAR_COLORS,
   DEFAULT_KEYBINDS,
   DIFFICULTIES,
+  NO_UPGRADES,
   QUALITY_ORDER,
   QUALITY_PRESETS,
   SECTOR_COUNT,
   TRACKS,
+  UPGRADES,
+  UPGRADE_MAX,
   carClassById,
   keyLabel,
+  normaliseUpgrades,
   trackById,
+  upgradeCost,
+  upgradeProgress,
 } from "./config";
+import { WEATHERS, WEATHER_ORDER } from "./sky";
 
 describe("tracks", () => {
   it("ships four circuits with unique ids and seeds", () => {
@@ -158,5 +165,47 @@ describe("key bindings", () => {
     expect(keyLabel("w")).toBe("W");
     expect(keyLabel("escape")).toBe("Esc");
     expect(keyLabel("shift")).toBe("Shift");
+  });
+});
+
+describe("garage upgrades", () => {
+  it("prices every level and reports maxed parts", () => {
+    for (const u of UPGRADES) {
+      expect(u.costs.length).toBe(UPGRADE_MAX);
+      for (let i = 1; i < u.costs.length; i++) expect(u.costs[i]).toBeGreaterThan(u.costs[i - 1]);
+      expect(upgradeCost(u.id, 0)).toBe(u.costs[0]);
+      expect(upgradeCost(u.id, UPGRADE_MAX)).toBeNull();
+    }
+  });
+
+  it("clamps corrupt stored levels", () => {
+    const out = normaliseUpgrades({ engine: 99, tyres: -4, brakes: 1.7, nitrous: NaN } as never);
+    expect(out).toEqual({ engine: UPGRADE_MAX, tyres: 0, brakes: 1, nitrous: 0 });
+    expect(normaliseUpgrades(undefined)).toEqual(NO_UPGRADES);
+  });
+
+  it("reports progress across the whole tree", () => {
+    expect(upgradeProgress(NO_UPGRADES)).toBe(0);
+    const maxed = Object.fromEntries(UPGRADES.map((u) => [u.id, UPGRADE_MAX]));
+    expect(upgradeProgress(maxed as never)).toBe(1);
+  });
+});
+
+describe("weather table", () => {
+  it("covers every weather id with sane numbers", () => {
+    for (const id of WEATHER_ORDER) {
+      const w = WEATHERS[id];
+      expect(w.id).toBe(id);
+      expect(w.grip).toBeGreaterThan(0.6);
+      expect(w.grip).toBeLessThanOrEqual(1);
+      expect(w.fogScale).toBeGreaterThan(0.1);
+      expect(w.payout).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it("pays more the worse the conditions get", () => {
+    expect(WEATHERS.rain.payout).toBeGreaterThan(WEATHERS.clear.payout);
+    expect(WEATHERS.sandstorm.grip).toBeLessThan(WEATHERS.clear.grip);
+    expect(WEATHERS.rain.grip).toBeLessThan(WEATHERS.overcast.grip);
   });
 });

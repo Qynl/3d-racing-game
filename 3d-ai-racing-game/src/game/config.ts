@@ -141,6 +141,75 @@ export function carClassById(id: string): CarClassDef {
   return CAR_CLASSES.find((c) => c.id === id) ?? CAR_CLASSES[0];
 }
 
+// ---------------------------------------------------------------- garage
+
+export type UpgradeId = "engine" | "tyres" | "brakes" | "nitrous";
+
+export interface UpgradeDef {
+  id: UpgradeId;
+  name: string;
+  blurb: string;
+  /** Cost of each level, index 0 = first upgrade. */
+  costs: number[];
+}
+
+export const UPGRADES: UpgradeDef[] = [
+  {
+    id: "engine",
+    name: "Engine",
+    blurb: "More power and a higher top end",
+    costs: [600, 1400, 2800],
+  },
+  {
+    id: "tyres",
+    name: "Tyres",
+    blurb: "Lateral grip and steering bite",
+    costs: [500, 1200, 2400],
+  },
+  {
+    id: "brakes",
+    name: "Brakes",
+    blurb: "Shorter stops, later braking",
+    costs: [450, 1000, 2000],
+  },
+  {
+    id: "nitrous",
+    name: "Nitrous",
+    blurb: "Bigger boost tank and shove",
+    costs: [700, 1600, 3200],
+  },
+];
+
+export const UPGRADE_MAX = 3;
+
+export type UpgradeLevels = Record<UpgradeId, number>;
+
+export const NO_UPGRADES: UpgradeLevels = { engine: 0, tyres: 0, brakes: 0, nitrous: 0 };
+
+/** Cost of the next level, or null when the part is already maxed. */
+export function upgradeCost(id: UpgradeId, level: number): number | null {
+  const def = UPGRADES.find((u) => u.id === id);
+  if (!def || level >= def.costs.length) return null;
+  return def.costs[level];
+}
+
+/** Clamps a (possibly corrupt) stored upgrade record into range. */
+export function normaliseUpgrades(raw: Partial<UpgradeLevels> | undefined): UpgradeLevels {
+  const out = { ...NO_UPGRADES };
+  if (!raw || typeof raw !== "object") return out;
+  for (const u of UPGRADES) {
+    const v = raw[u.id];
+    if (typeof v === "number" && isFinite(v)) out[u.id] = Math.min(UPGRADE_MAX, Math.max(0, Math.floor(v)));
+  }
+  return out;
+}
+
+/** 0..1 — how far through the whole upgrade tree a car is. */
+export function upgradeProgress(levels: UpgradeLevels): number {
+  const total = UPGRADES.length * UPGRADE_MAX;
+  return UPGRADES.reduce((sum, u) => sum + levels[u.id], 0) / total;
+}
+
 // ---------------------------------------------------------------- AI difficulty
 
 export type DifficultyId = "rookie" | "pro" | "legend";
@@ -161,6 +230,8 @@ export interface DifficultyDef {
   sloppiness: number;
   /** Catch-up strength when the player is far ahead or behind. */
   rubber: number;
+  /** Credit multiplier for beating this field. */
+  payout: number;
 }
 
 export const DIFFICULTIES: Record<DifficultyId, DifficultyDef> = {
@@ -174,6 +245,7 @@ export const DIFFICULTIES: Record<DifficultyId, DifficultyDef> = {
     boostUse: 0.3,
     sloppiness: 0.8,
     rubber: 1.3,
+    payout: 0.8,
   },
   pro: {
     id: "pro",
@@ -185,6 +257,7 @@ export const DIFFICULTIES: Record<DifficultyId, DifficultyDef> = {
     boostUse: 0.6,
     sloppiness: 0.35,
     rubber: 1.0,
+    payout: 1.1,
   },
   legend: {
     id: "legend",
@@ -196,6 +269,7 @@ export const DIFFICULTIES: Record<DifficultyId, DifficultyDef> = {
     boostUse: 1,
     sloppiness: 0.1,
     rubber: 0.6,
+    payout: 1.45,
   },
 };
 

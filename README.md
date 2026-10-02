@@ -1,12 +1,12 @@
 # Sundown Rally
 
 A 3D desert rally game that runs entirely in the browser. Procedural terrain, four seeded
-circuits plus an infinite Wildcard generator, three car classes, three AI rivals, a four-round
-championship, drift-charged boost, slipstreaming, launch control, damage, ghost cars and a
-full sector-timing system — built with React 19, Vite 7, Tailwind 4 and three.js. No game
+circuits plus an infinite Wildcard generator, three car classes with a credits-and-upgrades
+garage, dynamic weather, three AI rivals, a four-round championship, drift-charged boost,
+slipstreaming, launch control, damage, ghost cars and a full sector-timing system — built with React 19, Vite 7, Tailwind 4 and three.js. No game
 engine, no downloaded assets: every mesh, texture and sound is generated at runtime.
 
-The whole game ships as **one HTML file** (`dist/index.html`, ~1.2 MB / ~435 kB gzipped),
+The whole game ships as **one HTML file** (`dist/index.html`, ~1.2 MB / ~440 kB gzipped),
 fonts and all. Drop it anywhere, open it offline, it works.
 
 ```bash
@@ -46,6 +46,20 @@ run into the next braking zone. Clout a cactus and the damage bar climbs — you
 and steering bite until the bodywork shakes itself back together. The outer 60 cm of every
 circuit is a rumble strip: quick, noisy, and short on grip.
 
+**Weather**
+
+Clear, overcast, rain or sandstorm — or let the game roll the dice before each race. Rain
+takes away a fifth of your grip and most of your braking, a sandstorm takes away the view,
+and both pay considerably better. Rivals read the conditions too and slow their corner
+entries to match.
+
+**Credits and the garage**
+
+Every race pays out: finishing position, distance, a clean-race bonus, drift score, air time
+and records, multiplied by difficulty and weather. Spend the credits in the garage on four
+upgrade lines per chassis — engine, tyres, brakes, nitrous, three levels each. Upgrades are
+per car class, ride with you into every event, and are persisted.
+
 **Clean laps**
 
 Each lap is split into three timed sectors with a gate at each boundary. Miss a gate — or sit
@@ -79,7 +93,8 @@ so menus stay fully keyboard-navigable.
 - **Race** — three AI rivals, 1 to 7 laps, three difficulty tiers (Rookie / Pro / Legend).
 - **Time trial** — you, the clock, and your own ghost replaying your best lap.
 - **Season** — a four-round championship over every circuit, alternating direction each round,
-  scoring 10 / 6 / 3 / 1. Standings are persisted, so you can finish the season tomorrow.
+  scoring 10 / 6 / 3 / 1. Standings are persisted, so you can finish the season tomorrow, and
+  the title is worth a 1,500 cr bonus.
 
 Any circuit can also be driven **in reverse**, and the **Wildcard** tile rolls a brand-new
 circuit from a seed — reroll until you find one you like.
@@ -93,7 +108,7 @@ impacts, surface-dependent grip, slope influence, reverse, and per-class tuning.
 
 **Cars** · Three classes with genuinely different envelopes — Coyote 2.4 (balanced),
 Jackrabbit GT (grippy, quick off the line), Vulture V8 (huge top end, slides like a barge) —
-plus six liveries.
+plus six liveries and twelve buyable upgrade levels per chassis.
 
 **Tracks** · Four hand-seeded circuits (Sundown Loop, Mesa Switchback, Dune Runner, Coyote
 Canyon) generated from control-point radii through a centripetal Catmull-Rom spline, each with
@@ -108,7 +123,9 @@ on track get their finish time extrapolated instead of a bogus DNF.
 records keyed by track + mode + difficulty + lap count + car class, all persisted.
 
 **Presentation** · Three times of day (golden hour, high noon, desert night with headlights
-and a procedural starfield), ACES tonemapping, optional bloom, dust, damage smoke and speed
+and a procedural starfield) crossed with four weather states, a start/finish gantry whose
+five bulbs actually run the countdown, single-draw-call rain and blowing sand, wet-weather
+spray, ACES tonemapping, optional bloom, dust, damage smoke and speed
 lines, persistent skid-mark decals, floating rival name plates, a rotating minimap,
 position-change toasts, and an SVG speedometer that doubles as a boost gauge.
 
@@ -172,7 +189,7 @@ why it can be unit-tested in a plain Node environment.
 | `npm run typecheck`  | `tsc --noEmit`                                     |
 | `npm run lint`       | ESLint flat config (TS + react-hooks)              |
 | `npm run format`     | Prettier write (`format:check` in CI)              |
-| `npm test`           | Vitest (126 tests)                                 |
+| `npm test`           | Vitest (151 tests)                                 |
 | `npm run check`      | typecheck + lint + test                            |
 
 ## Testing

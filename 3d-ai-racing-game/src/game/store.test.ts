@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { NO_UPGRADES, UPGRADE_MAX, upgradeCost } from "./config";
 import {
+  defaultGarage,
   defaultHud,
   defaultSettings,
   emptyRecord,
@@ -263,5 +265,54 @@ describe("new settings", () => {
     expect(defaultSettings.showNameTags).toBe(true);
     expect(defaultSettings.wildcardSeed).toBeGreaterThan(0);
     expect(defaultSettings.keyBinds.throttle).toContain("w");
+  });
+});
+
+describe("garage", () => {
+  beforeEach(() => {
+    reset();
+    installStorage();
+    useGameStore.getState().resetGarage();
+  });
+
+  it("starts with seed money and no parts", () => {
+    const g = useGameStore.getState().garage;
+    expect(g.credits).toBe(defaultGarage.credits);
+    expect(useGameStore.getState().upgradesFor("coyote")).toEqual(NO_UPGRADES);
+  });
+
+  it("banks payouts and counts races and wins", () => {
+    useGameStore.getState().awardCredits(1500, { won: true });
+    useGameStore.getState().awardCredits(400);
+    const g = useGameStore.getState().garage;
+    expect(g.credits).toBe(defaultGarage.credits + 1900);
+    expect(g.racesRun).toBe(2);
+    expect(g.wins).toBe(1);
+  });
+
+  it("buys upgrades, charges for them and refuses what you can't afford", () => {
+    useGameStore.getState().awardCredits(1000);
+    const before = useGameStore.getState().garage.credits;
+    expect(useGameStore.getState().buyUpgrade("coyote", "tyres")).toBe(true);
+    const cost = upgradeCost("tyres", 0)!;
+    expect(useGameStore.getState().garage.credits).toBe(before - cost);
+    expect(useGameStore.getState().upgradesFor("coyote").tyres).toBe(1);
+    expect(useGameStore.getState().upgradesFor("vulture").tyres).toBe(0);
+    // drain the account, then the next part must be refused
+    useGameStore.setState({
+      garage: { ...useGameStore.getState().garage, credits: 0 },
+    });
+    expect(useGameStore.getState().buyUpgrade("coyote", "engine")).toBe(false);
+    expect(useGameStore.getState().upgradesFor("coyote").engine).toBe(0);
+  });
+
+  it("stops at the top level and persists", () => {
+    useGameStore.getState().awardCredits(100000);
+    for (let i = 0; i < UPGRADE_MAX; i++) {
+      expect(useGameStore.getState().buyUpgrade("coyote", "brakes")).toBe(true);
+    }
+    expect(useGameStore.getState().buyUpgrade("coyote", "brakes")).toBe(false);
+    expect(useGameStore.getState().upgradesFor("coyote").brakes).toBe(UPGRADE_MAX);
+    expect(localStorage.getItem("sundown-rally-garage-v1")).toContain("brakes");
   });
 });

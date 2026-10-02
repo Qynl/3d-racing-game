@@ -93,6 +93,104 @@ export const SKIES: Record<TimeOfDayId, SkyPalette> = {
   },
 };
 
+export type WeatherId = "clear" | "overcast" | "rain" | "sandstorm";
+
+export interface WeatherDef {
+  id: WeatherId;
+  name: string;
+  blurb: string;
+  /** Lateral grip multiplier applied to every car. */
+  grip: number;
+  /** Multiplies the fog distance — below 1 means you can see less. */
+  fogScale: number;
+  /** Multiplies sun/ambient intensity. */
+  lightScale: number;
+  /** Desaturates and tints the sky towards this colour by `skyMix`. */
+  tint: number;
+  skyMix: number;
+  /** Precipitation particles per second, 0 for dry weather. */
+  precip: number;
+  precipColor: number;
+  /** Downward (rain) vs sideways (sand) motion. */
+  precipFall: number;
+  precipDrift: number;
+  /** Extra payout for racing in it. */
+  payout: number;
+}
+
+export const WEATHERS: Record<WeatherId, WeatherDef> = {
+  clear: {
+    id: "clear",
+    name: "Clear",
+    blurb: "Dry, grippy, no excuses",
+    grip: 1,
+    fogScale: 1,
+    lightScale: 1,
+    tint: 0xffffff,
+    skyMix: 0,
+    precip: 0,
+    precipColor: 0xffffff,
+    precipFall: 0,
+    precipDrift: 0,
+    payout: 1,
+  },
+  overcast: {
+    id: "overcast",
+    name: "Overcast",
+    blurb: "Flat light, slightly cooler tyres",
+    grip: 0.96,
+    fogScale: 0.82,
+    lightScale: 0.72,
+    tint: 0x9aa3ad,
+    skyMix: 0.45,
+    precip: 0,
+    precipColor: 0xffffff,
+    precipFall: 0,
+    precipDrift: 0,
+    payout: 1.05,
+  },
+  rain: {
+    id: "rain",
+    name: "Rain",
+    blurb: "Low grip, long braking, big money",
+    grip: 0.78,
+    fogScale: 0.6,
+    lightScale: 0.55,
+    tint: 0x6f7c8a,
+    skyMix: 0.65,
+    precip: 2600,
+    precipColor: 0xbfd6e8,
+    precipFall: 34,
+    precipDrift: 5,
+    payout: 1.25,
+  },
+  sandstorm: {
+    id: "sandstorm",
+    name: "Sandstorm",
+    blurb: "You can barely see the next corner",
+    grip: 0.88,
+    fogScale: 0.3,
+    lightScale: 0.62,
+    tint: 0xc98f52,
+    skyMix: 0.78,
+    precip: 2200,
+    precipColor: 0xd8b184,
+    precipFall: 5,
+    precipDrift: 30,
+    payout: 1.35,
+  },
+};
+
+export const WEATHER_ORDER: WeatherId[] = ["clear", "overcast", "rain", "sandstorm"];
+
+/**
+ * Sky-box + fog colour for a palette under some weather: the sky is blended
+ * towards the weather tint so a rainy sunset actually looks rained on.
+ */
+export function weatherColor(base: number, w: WeatherDef): THREE.Color {
+  return new THREE.Color(base).lerp(new THREE.Color(w.tint), w.skyMix);
+}
+
 function dirFrom(elevation: number, azimuth: number): THREE.Vector3 {
   const e = THREE.MathUtils.degToRad(elevation);
   const a = THREE.MathUtils.degToRad(azimuth);
@@ -285,8 +383,8 @@ export interface LightRig {
   sun: THREE.DirectionalLight;
   hemi: THREE.HemisphereLight;
   ambient: THREE.AmbientLight;
-  /** Retunes every light for a new time of day. */
-  apply: (palette: SkyPalette) => void;
+  /** Retunes every light for a new time of day / weather combination. */
+  apply: (palette: SkyPalette, weather?: WeatherDef) => void;
 }
 
 /** Sun + fill lights, retunable for any time of day. */
@@ -318,30 +416,30 @@ export function createLighting(
   const ambient = new THREE.AmbientLight(palette.ambient, palette.ambientIntensity);
   scene.add(ambient);
 
-  const apply = (p: SkyPalette) => {
-    sun.color.set(p.sunColor);
-    sun.intensity = p.sunIntensity;
-    hemi.color.set(p.hemiSky);
-    hemi.groundColor.set(p.hemiGround);
-    hemi.intensity = p.hemiIntensity;
-    ambient.color.set(p.ambient);
-    ambient.intensity = p.ambientIntensity;
+  const apply = (p: SkyPalette, w: WeatherDef = WEATHERS.clear) => {
+    sun.color.copy(weatherColor(p.sunColor, w));
+    sun.intensity = p.sunIntensity * w.lightScale;
+    hemi.color.copy(weatherColor(p.hemiSky, w));
+    hemi.groundColor.copy(weatherColor(p.hemiGround, w));
+    hemi.intensity = p.hemiIntensity * (0.6 + w.lightScale * 0.4);
+    ambient.color.copy(weatherColor(p.ambient, w));
+    ambient.intensity = p.ambientIntensity * (1 + (1 - w.lightScale) * 1.6);
   };
 
   return { sun, hemi, ambient, apply };
 }
 
-/** Repaints an existing sky dome for a different time of day. */
-export function applySkyPalette(sky: THREE.Mesh, palette: SkyPalette) {
+/** Repaints an existing sky dome for a time of day and weather combination. */
+export function applySkyPalette(sky: THREE.Mesh, palette: SkyPalette, weather: WeatherDef = WEATHERS.clear) {
   const mat = sky.material as THREE.ShaderMaterial;
   const u = mat.uniforms;
-  (u.topColor.value as THREE.Color).set(palette.top);
-  (u.midColor.value as THREE.Color).set(palette.mid);
-  (u.horizonColor.value as THREE.Color).set(palette.horizon);
-  (u.bottomColor.value as THREE.Color).set(palette.bottom);
-  (u.sunColor.value as THREE.Color).set(palette.sunDisc);
+  (u.topColor.value as THREE.Color).copy(weatherColor(palette.top, weather));
+  (u.midColor.value as THREE.Color).copy(weatherColor(palette.mid, weather));
+  (u.horizonColor.value as THREE.Color).copy(weatherColor(palette.horizon, weather));
+  (u.bottomColor.value as THREE.Color).copy(weatherColor(palette.bottom, weather));
+  (u.sunColor.value as THREE.Color).copy(weatherColor(palette.sunDisc, weather));
   (u.sunDir.value as THREE.Vector3).copy(sunDirFor(palette));
-  u.starAmount.value = palette.id === "night" ? 1 : 0;
+  u.starAmount.value = palette.id === "night" ? 1 - weather.skyMix : 0;
   SUN_DIR.copy(sunDirFor(palette));
-  HORIZON_COLOR.set(palette.horizon);
+  HORIZON_COLOR.copy(weatherColor(palette.horizon, weather));
 }

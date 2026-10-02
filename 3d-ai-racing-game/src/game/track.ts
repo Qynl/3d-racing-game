@@ -348,3 +348,95 @@ export function buildStartLine(track: Track, getHeight: (x: number, z: number) =
   g.name = "startLine";
   return g;
 }
+
+export interface StartGantry {
+  group: THREE.Group;
+  /**
+   * Lights the countdown bulbs: 3/2/1 light up red one at a time, 0 turns the
+   * whole bar green for the start, and -1 switches everything off.
+   */
+  setLights: (n: number) => void;
+  dispose: () => void;
+}
+
+/**
+ * Start/finish gantry: two pylons, a banner across the top and five bulbs that
+ * actually run the countdown you can see from the grid.
+ */
+export function buildStartGantry(track: Track, getHeight: (x: number, z: number) => number): StartGantry {
+  const group = new THREE.Group();
+  group.name = "gantry";
+  const p = track.points[0];
+  const baseY = getHeight(p.x, p.z);
+  group.position.set(p.x, baseY, p.z);
+  group.rotation.y = track.yawAt(0);
+
+  const span = track.halfWidth * 2 + 4.5;
+  const height = 7.2;
+  const mats: THREE.Material[] = [];
+  const steel = new THREE.MeshStandardMaterial({ color: 0x4a4440, roughness: 0.55, metalness: 0.55 });
+  const banner = new THREE.MeshStandardMaterial({ color: 0xc2553a, roughness: 0.85 });
+  mats.push(steel, banner);
+
+  const legGeo = new THREE.CylinderGeometry(0.22, 0.28, height, 8);
+  for (const side of [-1, 1]) {
+    const leg = new THREE.Mesh(legGeo, steel);
+    leg.position.set((side * span) / 2, height / 2, 0);
+    leg.castShadow = true;
+    group.add(leg);
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.5, 1.4), steel);
+    foot.position.set((side * span) / 2, 0.25, 0);
+    group.add(foot);
+  }
+  const beam = new THREE.Mesh(new THREE.BoxGeometry(span, 0.45, 0.5), steel);
+  beam.position.y = height;
+  beam.castShadow = true;
+  group.add(beam);
+  const sign = new THREE.Mesh(new THREE.BoxGeometry(span * 0.78, 1.5, 0.18), banner);
+  sign.position.set(0, height - 1.15, 0.12);
+  group.add(sign);
+
+  // --- countdown bulbs
+  const bulbs: THREE.Mesh[] = [];
+  const bulbGeo = new THREE.SphereGeometry(0.33, 12, 8);
+  for (let i = 0; i < 5; i++) {
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0x2a2320,
+      emissive: 0x000000,
+      emissiveIntensity: 0,
+      roughness: 0.4,
+    });
+    mats.push(mat);
+    const bulb = new THREE.Mesh(bulbGeo, mat);
+    bulb.position.set((i - 2) * 1.25, height - 0.62, 0.42);
+    group.add(bulb);
+    bulbs.push(bulb);
+  }
+
+  const setLights = (n: number) => {
+    for (let i = 0; i < bulbs.length; i++) {
+      const m = bulbs[i].material as THREE.MeshStandardMaterial;
+      let on = false;
+      let green = false;
+      if (n === 0) {
+        on = true;
+        green = true;
+      } else if (n > 0) {
+        // 3 -> two outer bulbs, 2 -> four, 1 -> all five red
+        on = i < Math.min(5, 2 * (4 - n) - 1);
+      }
+      m.color.set(on ? (green ? 0x2f7f4a : 0x5a1f16) : 0x2a2320);
+      m.emissive.set(on ? (green ? 0x3cff8a : 0xff3b22) : 0x000000);
+      m.emissiveIntensity = on ? 3.2 : 0;
+    }
+  };
+  setLights(-1);
+
+  const dispose = () => {
+    legGeo.dispose();
+    bulbGeo.dispose();
+    for (const m of mats) m.dispose();
+  };
+
+  return { group, setLights, dispose };
+}

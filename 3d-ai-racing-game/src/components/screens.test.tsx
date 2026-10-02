@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import App from "../App";
 import { defaultHud, defaultSettings, useGameStore } from "../game/store";
@@ -83,6 +83,8 @@ describe("screens render without crashing", () => {
       settings: { ...defaultSettings, mode: "championship" },
       results: {
         position: 2,
+        credits: { total: 1240, lines: [{ label: "Finished P2", amount: 560 }] },
+        weather: "rain",
         standings: [
           { name: "ATLAS", points: 16, isPlayer: false, color: 0x4f6b4a, gained: 10 },
           { name: "YOU", points: 12, isPlayer: true, color: 0xc2553a, gained: 6 },
@@ -110,11 +112,63 @@ describe("screens render without crashing", () => {
     expect(screen.getByText(/\+10/)).toBeTruthy();
   });
 
+  it("shows the garage with credits and buyable upgrades", () => {
+    reset();
+    useGameStore.setState({
+      garage: { credits: 5000, upgrades: {}, racesRun: 3, wins: 1, spent: 0 },
+    });
+    render(<Menu />);
+    fireEvent.click(screen.getByRole("button", { name: /garage/i }));
+    expect(screen.getByText(/5,000 cr/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^600 cr$/i })).toBeTruthy();
+    expect(screen.getByText(/3 races · 1 wins/i)).toBeTruthy();
+  });
+
+  it("itemises the payout on the results screen", () => {
+    reset({
+      screen: "finished",
+      results: {
+        position: 1,
+        credits: {
+          total: 1800,
+          lines: [
+            { label: "Finished P1", amount: 900 },
+            { label: "Clean race", amount: 180 },
+          ],
+        },
+        weather: "rain",
+        standings: null,
+        seasonRace: null,
+        seasonDone: false,
+        totalTime: 100,
+        lapTimes: [50, 50],
+        bestLap: 50,
+        isRecordLap: false,
+        isRecordRace: false,
+        bestSectors: [16, 17, 17],
+        cars: [],
+        topSpeed: 180,
+        driftScore: 0,
+        airTime: 0,
+        cleanRace: true,
+        mode: "race",
+        trackId: "sundown",
+      },
+    });
+    const { container } = render(<Results />);
+    const text = container.textContent ?? "";
+    expect(text).toContain("+1,800 cr");
+    expect(text).toContain("Finished P1");
+    expect(text.toLowerCase()).toContain("rain");
+  });
+
   it("renders results with the finishing order", () => {
     reset({
       screen: "finished",
       results: {
         position: 1,
+        credits: null,
+        weather: "clear",
         standings: null,
         seasonRace: null,
         seasonDone: false,

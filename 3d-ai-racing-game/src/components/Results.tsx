@@ -1,5 +1,6 @@
 import { gameHolder } from "../game/Game";
 import { trackById, wildcardTrack } from "../game/config";
+import { WEATHERS } from "../game/sky";
 import { formatShort, formatTime, ordinal, useGameStore } from "../game/store";
 import { cn } from "../utils/cn";
 
@@ -13,6 +14,7 @@ const HEADLINES: Record<number, { title: string; sub: string }> = {
 export default function Results() {
   const results = useGameStore((s) => s.results);
   const settings = useGameStore((s) => s.settings);
+  const balance = useGameStore((s) => s.garage.credits);
 
   if (!results) {
     return (
@@ -29,6 +31,8 @@ export default function Results() {
 
   const timeTrial = results.mode === "timetrial";
   const standings = results.standings ?? [];
+  const credits = results.credits;
+  const weather = WEATHERS[results.weather] ?? WEATHERS.clear;
   const head = HEADLINES[Math.min(4, results.position)];
   const track =
     results.trackId === "wildcard" ? wildcardTrack(settings.wildcardSeed) : trackById(results.trackId);
@@ -45,7 +49,8 @@ export default function Results() {
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="text-[11px] uppercase tracking-[0.3em] text-cream/55">
-              {track.name} · {timeTrial ? "Time trial" : settings.difficulty} · {settings.laps} laps
+              {track.name} · {timeTrial ? "Time trial" : settings.difficulty} · {settings.laps} laps ·{" "}
+              {weather.name}
             </div>
             {!timeTrial && (
               <div className="mt-2 flex items-end gap-2">
@@ -143,6 +148,33 @@ export default function Results() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {credits && credits.total > 0 && (
+          <div className="mt-5 rounded-xl border border-sand/25 bg-sand/5 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-[10px] uppercase tracking-[0.3em] text-cream/55">Payout</span>
+              <span className="font-display text-xl font-extrabold tabular-nums text-sand">
+                +{credits.total.toLocaleString()} cr
+              </span>
+            </div>
+            <div className="grid gap-x-6 gap-y-0.5 sm:grid-cols-2">
+              {credits.lines.map((line) => (
+                <div
+                  key={line.label}
+                  className="flex items-baseline justify-between text-[11px] uppercase tracking-[0.12em] text-cream/60"
+                >
+                  <span className="truncate">{line.label}</span>
+                  <span className="font-display tabular-nums text-cream/85">
+                    +{line.amount.toLocaleString()}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-2 text-[10px] uppercase tracking-[0.2em] text-cream/40">
+              Balance {balance.toLocaleString()} cr · spend it in the garage
+            </div>
           </div>
         )}
 

@@ -247,6 +247,21 @@ export default function HUD({ touch = false }: { touch?: boolean }) {
         />
       )}
 
+      {/* conditions chip */}
+      {hud.conditions !== "" && (
+        <div className="absolute left-1/2 top-[96px] -translate-x-1/2 md:top-[112px]">
+          <div
+            className={cn(
+              "hud-chip rounded-full px-3 py-1 text-[10px] uppercase tracking-[0.25em]",
+              hud.lowGrip ? "border-clay/50 text-clay-bright" : "text-cream/55",
+            )}
+          >
+            {hud.conditions}
+            {hud.lowGrip && " · low grip"}
+          </div>
+        </div>
+      )}
+
       {/* top left: position + lap */}
       <div className="absolute left-4 top-4 flex items-start gap-2 md:left-7 md:top-6 md:gap-3">
         <div

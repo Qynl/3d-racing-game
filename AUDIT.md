@@ -223,3 +223,24 @@ game was still missing:
 
 Test coverage grew with the features: **126 unit tests** across physics, track generation
 (including reverse and Wildcard), store/season persistence, bindings and the React screens.
+
+## §7 Career, weather and the world (second depth pass)
+
+- ✅ **Weather.** Clear / overcast / rain / sandstorm (or rolled per race) drive grip, braking,
+  fog distance, light intensity, sky tint, headlights, an audio bed and the payout multiplier.
+  Rain and sand are one `Precipitation` system — a single draw call of recycled points that
+  wraps around the camera, so a storm costs no allocations per frame.
+- ✅ **AI reads the weather** — rival corner speed scales with the square root of grip, the
+  same relationship the physics uses, so they do not simply drive off the road in the wet.
+- ✅ **Credits economy** (`economy.ts`, pure and unit-tested): position, distance, clean race,
+  drift score, air time, records, season bonuses — then difficulty and weather multipliers.
+  Every line is itemised on the results screen so the payout is never a mystery number.
+- ✅ **Garage.** Four upgrade lines per chassis (engine / tyres / brakes / nitrous), three
+  levels each, priced on a rising curve, persisted separately from settings, applied only to
+  the player's car so difficulty keeps its meaning. Buying a part rebuilds the car instantly.
+- ✅ **Start/finish gantry** with five bulbs that run the real countdown, plus banner and
+  pylons, rebuilt and disposed with the rest of the world when the circuit changes.
+- ✅ **Wet-weather spray**, damped dust on wet ground, and a low-grip HUD chip.
+
+Tests: **151**, adding payout maths, upgrade clamping/pricing, weather-table sanity,
+precipitation recycling, garage persistence and two more React screen tests.

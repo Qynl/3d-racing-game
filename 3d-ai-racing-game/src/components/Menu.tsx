@@ -10,10 +10,15 @@ import {
   QUALITY_ORDER,
   QUALITY_PRESETS,
   TRACKS,
+  UPGRADES,
+  UPGRADE_MAX,
   type QualityId,
+  type UpgradeId,
   keyLabel,
+  upgradeCost,
   wildcardTrack,
 } from "../game/config";
+import { WEATHERS, WEATHER_ORDER, type WeatherId } from "../game/sky";
 import {
   type Difficulty,
   type RaceMode,
@@ -92,6 +97,64 @@ function BindRow({
 
 type Tab = "race" | "car" | "options";
 
+const WEATHER_OPTIONS: { id: WeatherId | "random"; label: string; desc: string }[] = [
+  ...WEATHER_ORDER.map((id) => ({ id, label: WEATHERS[id].name, desc: WEATHERS[id].blurb })),
+  { id: "random" as const, label: "Roll it", desc: "Surprise me each race" },
+];
+
+const fmtCredits = (n: number) => `${Math.round(n).toLocaleString()} cr`;
+
+/** One upgrade line in the garage: pips, blurb and a buy button. */
+function UpgradeRow({
+  id,
+  name,
+  blurb,
+  level,
+  credits,
+  onBuy,
+}: {
+  id: UpgradeId;
+  name: string;
+  blurb: string;
+  level: number;
+  credits: number;
+  onBuy: (id: UpgradeId) => void;
+}) {
+  const cost = upgradeCost(id, level);
+  const affordable = cost !== null && cost <= credits;
+  return (
+    <div className="flex items-center gap-3 py-1.5">
+      <div className="min-w-0 flex-1">
+        <div className="font-display text-sm font-bold uppercase tracking-wide text-cream/85">{name}</div>
+        <div className="truncate text-[10px] uppercase tracking-[0.12em] text-cream/45">{blurb}</div>
+      </div>
+      <div className="flex gap-1" aria-label={`${name} level ${level} of ${UPGRADE_MAX}`}>
+        {Array.from({ length: UPGRADE_MAX }, (_, i) => (
+          <span
+            key={i}
+            className={cn("h-2.5 w-2.5 rounded-sm", i < level ? "bg-sand" : "bg-cream/15")}
+            aria-hidden
+          />
+        ))}
+      </div>
+      <button
+        disabled={cost === null || !affordable}
+        onClick={() => onBuy(id)}
+        className={cn(
+          "w-[86px] rounded-lg px-2 py-1.5 font-display text-xs font-bold uppercase tracking-wide transition-colors",
+          cost === null
+            ? "border border-cream/10 text-cream/35"
+            : affordable
+              ? "btn-primary"
+              : "border border-cream/10 text-cream/35",
+        )}
+      >
+        {cost === null ? "Maxed" : fmtCredits(cost)}
+      </button>
+    </div>
+  );
+}
+
 const IS_TOUCH = typeof window !== "undefined" && ("ontouchstart" in window || navigator.maxTouchPoints > 0);
 
 export default function Menu() {
@@ -113,6 +176,9 @@ export default function Menu() {
   };
 
   const season = useGameStore((s) => s.season);
+  const garage = useGameStore((s) => s.garage);
+  const buyUpgrade = useGameStore((s) => s.buyUpgrade);
+  const levels = garage.upgrades[settings.carClassId] ?? { engine: 0, tyres: 0, brakes: 0, nitrous: 0 };
   const endSeason = useGameStore((s) => s.endSeason);
   const wildcard = wildcardTrack(settings.wildcardSeed);
 
@@ -192,7 +258,7 @@ export default function Menu() {
             {(
               [
                 ["race", "Race"],
-                ["car", "Car"],
+                ["car", "Garage"],
                 ["options", "Options"],
               ] as [Tab, string][]
             ).map(([id, label]) => (
@@ -328,6 +394,16 @@ export default function Menu() {
                   </div>
                 )}
                 <div>
+                  <Label>Weather</Label>
+                  <Segmented
+                    ariaLabel="Weather"
+                    columns={3}
+                    options={WEATHER_OPTIONS}
+                    value={settings.weather}
+                    onChange={(weather) => apply({ weather })}
+                  />
+                </div>
+                <div>
                   <Label>Laps</Label>
                   <div className="flex gap-2">
                     {[1, 2, 3, 5, 7].map((n) => (
@@ -349,6 +425,12 @@ export default function Menu() {
 
             {tab === "car" && (
               <div className="flex flex-col gap-4">
+                <div className="flex items-center justify-between rounded-xl border border-sand/30 bg-sand/10 px-3 py-2">
+                  <span className="text-[10px] uppercase tracking-[0.25em] text-cream/60">Credits</span>
+                  <span className="font-display text-xl font-extrabold tabular-nums text-sand">
+                    {fmtCredits(garage.credits)}
+                  </span>
+                </div>
                 <div>
                   <Label>Chassis</Label>
                   <div className="flex flex-col gap-2">
@@ -388,6 +470,32 @@ export default function Menu() {
                         <Bar value={v} />
                       </div>
                     ))}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-cream/10 p-3">
+                  <div className="mb-1 flex items-center justify-between">
+                    <Label>Upgrades · {carClass.name}</Label>
+                    <span className="text-[10px] uppercase tracking-[0.2em] text-cream/40">
+                      {garage.racesRun} races · {garage.wins} wins
+                    </span>
+                  </div>
+                  {UPGRADES.map((u) => (
+                    <UpgradeRow
+                      key={u.id}
+                      id={u.id}
+                      name={u.name}
+                      blurb={u.blurb}
+                      level={levels[u.id]}
+                      credits={garage.credits}
+                      onBuy={(id) => {
+                        if (buyUpgrade(settings.carClassId, id)) {
+                          gameHolder.game?.refreshCars();
+                        }
+                      }}
+                    />
+                  ))}
+                  <div className="mt-1 text-[10px] uppercase tracking-[0.15em] text-cream/40">
+                    Upgrades are per chassis and ride with you into every race.
                   </div>
                 </div>
                 <div>

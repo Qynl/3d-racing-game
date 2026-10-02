@@ -1,8 +1,15 @@
 import { create } from "zustand";
+import type { CreditSummary } from "./economy";
+import { WEATHER_ORDER, type WeatherId } from "./sky";
 import {
   CAR_CLASSES,
   CAR_COLORS,
   DEFAULT_KEYBINDS,
+  NO_UPGRADES,
+  type UpgradeId,
+  type UpgradeLevels,
+  normaliseUpgrades,
+  upgradeCost,
   QUALITY_PRESETS,
   type QualityId,
   SECTOR_COUNT,
@@ -49,6 +56,19 @@ export interface Settings {
   showNameTags: boolean;
   /** Keyboard bindings, action -> list of lowercase key names. */
   keyBinds: Record<string, string[]>;
+  /** Fixed weather, or "random" to roll it per race. */
+  weather: WeatherId | "random";
+}
+
+/** Persisted career progress: money in the bank and parts bolted on. */
+export interface Garage {
+  credits: number;
+  /** Car class id -> installed upgrade levels. */
+  upgrades: Record<string, UpgradeLevels>;
+  /** Lifetime totals, shown in the garage. */
+  racesRun: number;
+  wins: number;
+  spent: number;
 }
 
 export interface HudData {
@@ -91,6 +111,10 @@ export interface HudData {
   surface: "track" | "rumble" | "sand";
   /** Short launch verdict shown right after the lights go out. */
   launchRating: string | null;
+  /** Weather label shown under the clock, "" when the weather is clear. */
+  conditions: string;
+  /** True when the surface grip is below dry. */
+  lowGrip: boolean;
 }
 
 export interface CarResult {
@@ -141,6 +165,10 @@ export interface RaceResults {
   trackId: string;
   /** Championship standings after this race, when racing a season. */
   standings: StandingRow[] | null;
+  /** Credits earned, itemised. */
+  credits: CreditSummary | null;
+  /** Weather the race was run in. */
+  weather: WeatherId;
   /** 1-based race number and total, for championship results. */
   seasonRace: { index: number; total: number } | null;
   seasonDone: boolean;
@@ -164,6 +192,7 @@ export interface TrackRecord {
 const SETTINGS_KEY = "sundown-rally-settings-v2";
 const RECORDS_KEY = "sundown-rally-records-v2";
 const SEASON_KEY = "sundown-rally-season-v1";
+const GARAGE_KEY = "sundown-rally-garage-v1";
 
 /** Points for P1..P4, F1-style but short. */
 export const SEASON_POINTS = [10, 6, 3, 1];
@@ -194,6 +223,15 @@ export const defaultSettings: Settings = {
   colorBlindSafe: false,
   showNameTags: true,
   keyBinds: { ...DEFAULT_KEYBINDS },
+  weather: "clear",
+};
+
+export const defaultGarage: Garage = {
+  credits: 800,
+  upgrades: {},
+  racesRun: 0,
+  wins: 0,
+  spent: 0,
 };
 
 function prefersReducedMotion(): boolean {
@@ -232,6 +270,9 @@ function loadSettings(): Settings {
     if (!["sunset", "noon", "night"].includes(merged.timeOfDay)) merged.timeOfDay = base.timeOfDay;
     if (!["race", "timetrial", "championship"].includes(merged.mode)) merged.mode = base.mode;
     merged.keyBinds = normaliseBinds(merged.keyBinds);
+    if (merged.weather !== "random" && !WEATHER_ORDER.includes(merged.weather as WeatherId)) {
+      merged.weather = base.weather;
+    }
     return merged;
   } catch {
     return base;
@@ -261,6 +302,35 @@ function saveSettings(s: Settings) {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
   } catch {
     /* storage disabled — fine, settings just won't persist */
+  }
+}
+
+function loadGarage(): Garage {
+  try {
+    const raw = localStorage.getItem(GARAGE_KEY);
+    if (!raw) return { ...defaultGarage, upgrades: {} };
+    const parsed = JSON.parse(raw) as Partial<Garage>;
+    const upgrades: Record<string, UpgradeLevels> = {};
+    for (const c of CAR_CLASSES) {
+      upgrades[c.id] = normaliseUpgrades(parsed.upgrades?.[c.id]);
+    }
+    return {
+      credits: Math.max(0, Math.round(Number(parsed.credits) || 0)),
+      upgrades,
+      racesRun: Math.max(0, Math.round(Number(parsed.racesRun) || 0)),
+      wins: Math.max(0, Math.round(Number(parsed.wins) || 0)),
+      spent: Math.max(0, Math.round(Number(parsed.spent) || 0)),
+    };
+  } catch {
+    return { ...defaultGarage, upgrades: {} };
+  }
+}
+
+function saveGarage(g: Garage) {
+  try {
+    localStorage.setItem(GARAGE_KEY, JSON.stringify(g));
+  } catch {
+    /* ignore */
   }
 }
 
@@ -351,6 +421,8 @@ export const defaultHud: HudData = {
   revs: 0,
   surface: "track",
   launchRating: null,
+  conditions: "",
+  lowGrip: false,
 };
 
 // ---------------------------------------------------------------- store
@@ -377,6 +449,14 @@ interface GameStore {
   setFps: (f: number) => void;
   pushToast: (t: Omit<Toast, "id">) => void;
   dropToast: (id: number) => void;
+  garage: Garage;
+  /** Banks a payout and bumps the lifetime counters. */
+  awardCredits: (amount: number, opts?: { won?: boolean }) => void;
+  /** Buys the next level of a part; returns false when it can't be afforded. */
+  buyUpgrade: (carClassId: string, id: UpgradeId) => boolean;
+  /** Installed upgrades for a car class (never undefined). */
+  upgradesFor: (carClassId: string) => UpgradeLevels;
+  resetGarage: () => void;
   season: Championship | null;
   /** Starts a fresh season over the given circuits. */
   startSeason: (c: Omit<Championship, "raceIndex" | "points" | "done">) => void;
@@ -423,6 +503,39 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setFps: (fps) => set({ fps }),
   pushToast: (t) => set((s) => ({ toasts: [...s.toasts.slice(-3), { ...t, id: toastId++ }] })),
   dropToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+  garage: loadGarage(),
+  awardCredits: (amount, opts) =>
+    set((s) => {
+      const garage: Garage = {
+        ...s.garage,
+        credits: Math.max(0, s.garage.credits + Math.round(amount)),
+        racesRun: s.garage.racesRun + 1,
+        wins: s.garage.wins + (opts?.won ? 1 : 0),
+      };
+      saveGarage(garage);
+      return { garage };
+    }),
+  buyUpgrade: (carClassId, id) => {
+    const s = get();
+    const levels = s.upgradesFor(carClassId);
+    const cost = upgradeCost(id, levels[id]);
+    if (cost === null || cost > s.garage.credits) return false;
+    const garage: Garage = {
+      ...s.garage,
+      credits: s.garage.credits - cost,
+      spent: s.garage.spent + cost,
+      upgrades: { ...s.garage.upgrades, [carClassId]: { ...levels, [id]: levels[id] + 1 } },
+    };
+    saveGarage(garage);
+    set({ garage });
+    return true;
+  },
+  upgradesFor: (carClassId) => get().garage.upgrades[carClassId] ?? { ...NO_UPGRADES },
+  resetGarage: () => {
+    const garage: Garage = { ...defaultGarage, upgrades: {} };
+    saveGarage(garage);
+    set({ garage });
+  },
   season: loadSeason(),
   startSeason: (c) => {
     const season: Championship = { ...c, raceIndex: 0, points: {}, done: false };

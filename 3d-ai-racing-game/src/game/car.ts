@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import type { CarClassDef } from "./config";
+import { type CarClassDef, NO_UPGRADES, type UpgradeLevels, normaliseUpgrades } from "./config";
 import { clamp, damp } from "./noise";
 import { Terrain } from "./terrain";
 import { Track } from "./track";
@@ -294,15 +294,18 @@ export interface CarTuning {
   boostPower: number;
 }
 
-export function tuningFromClass(def: CarClassDef): CarTuning {
+export function tuningFromClass(def: CarClassDef, upgrades: UpgradeLevels = NO_UPGRADES): CarTuning {
+  const u = normaliseUpgrades(upgrades);
   return {
-    topSpeed: def.topSpeed,
-    engine: def.engine,
-    brake: def.brake,
-    grip: def.grip,
-    steer: def.steer,
-    boostTank: def.boostTank,
-    boostPower: def.boostPower,
+    // Each upgrade level is a modest, predictable step — four levels of
+    // everything is quick, not a different category of car.
+    topSpeed: def.topSpeed * (1 + u.engine * 0.035),
+    engine: def.engine * (1 + u.engine * 0.06),
+    brake: def.brake * (1 + u.brakes * 0.08),
+    grip: def.grip * (1 + u.tyres * 0.05),
+    steer: def.steer * (1 + u.tyres * 0.025),
+    boostTank: def.boostTank * (1 + u.nitrous * 0.09),
+    boostPower: def.boostPower * (1 + u.nitrous * 0.055),
   };
 }
 
@@ -334,6 +337,12 @@ export class CarPhysics {
   landingImpact = 0;
   /** Set for one frame when the car leaves the ground. */
   justLaunched = false;
+
+  /**
+   * Weather grip multiplier (1 = dry). Written by the race loop every frame so
+   * rain and sandstorms cost the same grip for every car on track.
+   */
+  conditionGrip = 1;
 
   /** Which surface the tyres are on right now. */
   surface: Surface = "track";
@@ -434,6 +443,7 @@ export class CarPhysics {
 
   /** Full reset of per-race accumulators. */
   resetRaceState() {
+    this.conditionGrip = 1;
     this.damage = 0;
     this.draft = 0;
     this.rumble = 0;
@@ -510,7 +520,7 @@ export class CarPhysics {
       this.braking = false;
       if (input.brake > 0) {
         if (vF > 0.3) {
-          aF -= input.brake * T.brake;
+          aF -= input.brake * T.brake * (0.72 + 0.28 * this.conditionGrip);
           this.braking = true;
         } else {
           aF -= input.brake * T.engine * 0.55 * (1 - clamp(-vF / REVERSE_MAX, 0, 1));
@@ -536,7 +546,8 @@ export class CarPhysics {
     }
 
     // ---- lateral grip
-    const surfaceGrip = onTrack ? (onRumble ? T.grip * 0.86 : T.grip) : T.grip * 0.47;
+    const wet = this.conditionGrip;
+    const surfaceGrip = (onTrack ? (onRumble ? T.grip * 0.86 : T.grip) : T.grip * 0.47) * wet;
     const gripRate = airborne ? 0.25 : input.handbrake ? T.grip * 0.22 : surfaceGrip;
     vR *= Math.exp(-gripRate * dt);
 

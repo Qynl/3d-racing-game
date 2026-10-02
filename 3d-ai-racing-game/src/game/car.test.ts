@@ -377,3 +377,49 @@ describe("launch control, slipstream and damage", () => {
     expect(Math.abs(strip.speedR)).toBeGreaterThan(Math.abs(clean.speedR));
   });
 });
+
+describe("weather grip and garage upgrades", () => {
+  it("wet conditions cost lateral grip", () => {
+    const dry = freshCar();
+    drive(dry, input({ throttle: 1 }), 6);
+    drive(dry, input({ throttle: 1, steer: 1 }), 1.5);
+    const wet = freshCar();
+    wet.conditionGrip = 0.78;
+    for (let i = 0; i < 6 * 120; i++) {
+      wet.conditionGrip = 0.78;
+      wet.step(input({ throttle: 1 }), 1 / 120, flatTerrain(), straightTrack());
+    }
+    for (let i = 0; i < 1.5 * 120; i++) {
+      wet.conditionGrip = 0.78;
+      wet.step(input({ throttle: 1, steer: 1 }), 1 / 120, flatTerrain(), straightTrack());
+    }
+    expect(Math.abs(wet.speedR)).toBeGreaterThan(Math.abs(dry.speedR));
+  });
+
+  it("a fully upgraded car is quicker than a stock one", () => {
+    const stock = new CarPhysics(tuningFromClass(carClassById("coyote")));
+    const tuned = new CarPhysics(
+      tuningFromClass(carClassById("coyote"), { engine: 3, tyres: 3, brakes: 3, nitrous: 3 }),
+    );
+    expect(tuned.tuning.topSpeed).toBeGreaterThan(stock.tuning.topSpeed);
+    expect(tuned.tuning.engine).toBeGreaterThan(stock.tuning.engine);
+    expect(tuned.tuning.grip).toBeGreaterThan(stock.tuning.grip);
+    expect(tuned.tuning.boostTank).toBeGreaterThan(stock.tuning.boostTank);
+    // ...but still recognisably the same class, not a different car
+    expect(tuned.tuning.topSpeed).toBeLessThan(stock.tuning.topSpeed * 1.25);
+  });
+
+  it("upgrades actually show up in a standing start", () => {
+    const stock = new CarPhysics(tuningFromClass(carClassById("coyote")));
+    stock.place(0, 0, 0, flatTerrain(), straightTrack());
+    stock.resetRaceState();
+    drive(stock, input({ throttle: 1 }), 4);
+    const tuned = new CarPhysics(
+      tuningFromClass(carClassById("coyote"), { engine: 3, tyres: 0, brakes: 0, nitrous: 0 }),
+    );
+    tuned.place(0, 0, 0, flatTerrain(), straightTrack());
+    tuned.resetRaceState();
+    drive(tuned, input({ throttle: 1 }), 4);
+    expect(tuned.speedF).toBeGreaterThan(stock.speedF);
+  });
+});
