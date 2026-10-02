@@ -4,7 +4,7 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
-import { AIController, AIParams } from "./ai";
+import { AIController, type AIMode, AIParams } from "./ai";
 import { nextFrame } from "./async";
 import { AudioEngine } from "./audio";
 import {
@@ -18,8 +18,10 @@ import {
   tuningFromClass,
 } from "./car";
 import {
-  AI_NAMES,
   CAR_COLORS,
+  driversFor,
+  type DifficultyDef,
+  type DriverDef,
   DIFFICULTIES,
   QUALITY_PRESETS,
   type QualityId,
@@ -65,6 +67,7 @@ import {
 } from "./store";
 import { Terrain, WORLD_RADIUS } from "./terrain";
 import { ColliderGrid } from "./collision";
+import { computeRacingLine, type RacingLine } from "./racingline";
 import type { MinimapBounds, MinimapScene } from "./minimap";
 import { computeMinimapBounds, drawMinimap } from "./minimap";
 import {
@@ -80,6 +83,8 @@ interface CarEntity {
   physics: CarPhysics;
   visual: CarVisual;
   ai: AIController | null;
+  /** Last reported AI intent, used to spot new incidents. */
+  aiMode: AIMode;
   name: string;
   color: number;
   unwrapped: number;
@@ -165,6 +170,8 @@ export class Game {
   particles!: ParticleSystem;
   skid!: SkidMarks;
   racingLine: THREE.Mesh | null = null;
+  /** Solved racing line + speed plan for the current circuit. */
+  line: RacingLine | null = null;
   gantry: StartGantry | null = null;
   audio = new AudioEngine();
   input = new InputManager();
@@ -303,7 +310,8 @@ export class Game {
     scene.add(buildStartLine(this.track, getH));
     this.gantry = buildStartGantry(this.track, getH);
     scene.add(this.gantry.group);
-    this.racingLine = buildRacingLine(this.track, getH);
+    this.line = computeRacingLine(this.track);
+    this.racingLine = buildRacingLine(this.track, getH, this.line);
     this.racingLine.visible = this.settings.showRacingLine;
     scene.add(this.racingLine);
 
@@ -546,29 +554,22 @@ export class Game {
     const timeTrial = s.mode === "timetrial";
     const diff = DIFFICULTIES[s.difficulty];
     const playerClass = carClassById(s.carClassId);
-    const aiColors = CAR_COLORS.filter((_, i) => i !== s.carColor);
-    const aiCount = timeTrial ? 0 : 3;
-    for (let i = 0; i < aiCount; i++) {
-      const color = aiColors[(i * 2 + s.difficulty.length) % aiColors.length].hex;
-      const params: AIParams = {
-        aggression: diff.aggression,
-        lookahead: diff.lookahead,
-        boostUse: diff.boostUse,
-        sloppiness: diff.sloppiness,
-        // spread the field slightly so the three rivals aren't clones
-        topSpeed: MAX_SPEED * diff.topSpeedFactor * (1 + (i - 1) * 0.025),
-        cornerGrip: diff.cornerGrip * (1 + (i - 1) * 0.02),
-      };
+    const field = timeTrial ? [] : driversFor(s.rivals);
+    field.forEach((d, i) => {
+      // The difficulty sets the envelope; the driver's personality decides
+      // where inside that envelope they sit, so every rival feels different
+      // without any of them breaking the difficulty you chose.
+      const params: AIParams = aiParamsFor(diff, d);
       this.cars.push(
         this.makeEntity(
-          color,
+          d.color,
           i + 2,
-          new AIController(this.track, params, i + 1),
-          AI_NAMES[i],
+          new AIController(this.track, params, i + 1, this.line),
+          d.name,
           playerClass.id,
         ),
       );
-    }
+    });
     const player = this.makeEntity(CAR_COLORS[s.carColor].hex, 1, null, "YOU", playerClass.id);
     this.cars.push(player);
     this.player = player;
@@ -616,6 +617,7 @@ export class Game {
       physics: new CarPhysics(tuning),
       visual,
       ai,
+      aiMode: "cruise",
       name,
       color,
       unwrapped: 0,
@@ -699,12 +701,16 @@ export class Game {
     const tmp = this.tmpV;
     const single = this.cars.length === 1;
     this.cars.forEach((e, slot) => {
-      const idx = single ? (M - 14) % M : (M - 16 - slot * 12 + M) % M;
-      const lateral = single ? 0 : slot % 2 === 0 ? -2.7 : 2.7;
+      // Two cars per row, staggered, so even an eight-car field fits neatly
+      // behind the gantry.
+      const row = slot >> 1;
+      const back = single ? 14 : 16 + row * 9;
+      const idx = ((M - back) % M + M) % M;
+      const lateral = single ? 0 : slot % 2 === 0 ? -2.9 : 2.9;
       this.track.offsetPoint(idx, lateral, tmp);
       e.physics.place(tmp.x, tmp.z, this.track.yawAt(idx), this.terrain, this.track);
       e.physics.resetRaceState();
-      e.unwrapped = (single ? M - 14 : M - 16 - slot * 12) - M;
+      e.unwrapped = M - back - M;
       e.lastIdx = e.physics.trackIndex;
       e.crossings = 0;
       e.lapStart = 0;
@@ -780,7 +786,8 @@ export class Game {
     this.gantry?.dispose();
     this.gantry = buildStartGantry(this.track, getH);
     this.scene.add(this.gantry.group);
-    this.racingLine = buildRacingLine(this.track, getH);
+    this.line = computeRacingLine(this.track);
+    this.racingLine = buildRacingLine(this.track, getH, this.line);
     this.racingLine.visible = this.settings.showRacingLine;
     this.scene.add(this.racingLine);
     store.setProgress(0.9, "Planting cacti");
@@ -920,6 +927,8 @@ export class Game {
   }
 
   private pausedFrom: Screen = "racing";
+  /** Throttles rival incident callouts. */
+  private incidentCooldown = 0;
 
   resume() {
     if (this.state !== "paused") return;
@@ -1300,6 +1309,7 @@ export class Game {
     }
     this.wasBoosting = this.playerInput.boost && player.physics.boost > 0.02;
 
+    this.incidentCooldown = Math.max(0, this.incidentCooldown - dt);
     const allPhysics = this.cars.map((c) => c.physics);
     const diff = DIFFICULTIES[this.settings.difficulty];
     // Rivals respect the conditions too: corner speed scales with the square
@@ -1307,12 +1317,35 @@ export class Game {
     const gripScale = Math.sqrt(this.weather.grip);
     for (const e of this.cars) {
       if (!e.ai) continue;
-      e.ai.params.cornerGrip = diff.cornerGrip * gripScale;
+      // Weather scales the driver's own corner commitment, not the raw
+      // difficulty value, so personalities survive a rain shower.
+      e.ai.params.cornerGrip = e.ai.baseCornerGrip * gripScale;
+      // Last lap: rivals stop managing the race and start racing it.
+      const lastLap = e.crossings >= this.totalLaps && !e.finished;
+      e.ai.params.boldness = Math.min(1, e.ai.baseBoldness * (lastLap ? 1.25 : 1));
       const gapUnits = (player.unwrapped - e.unwrapped) * this.track.spacing;
       e.ai.speedScale = player.finished ? 1 : 1 + clamp(gapUnits / 650, -0.05, 0.06) * diff.rubber;
+      const prevMode = e.aiMode;
       e.input = e.ai.update(e.physics, allPhysics, dt, this.time, this.raceTime > 0.1);
+      e.aiMode = e.ai.mode;
+      // Call out rival incidents the player can actually see.
+      if (
+        e.aiMode === "mistake" &&
+        prevMode !== "mistake" &&
+        this.incidentCooldown <= 0 &&
+        this.state === "racing" &&
+        e.physics.pos.distanceTo(player.physics.pos) < 70
+      ) {
+        this.incidentCooldown = 4;
+        useGameStore
+          .getState()
+          .pushToast({ text: `${e.name} runs wide`, kind: "good" });
+      }
       // keep rivals topped up so they can actually use boost
-      if (this.raceTime > 0.1) e.physics.boost = Math.min(1, e.physics.boost + dt * 0.055);
+      if (this.raceTime > 0.1) {
+        const rate = 0.04 + e.ai.params.boostUse * 0.035;
+        e.physics.boost = Math.min(1, e.physics.boost + dt * rate);
+      }
     }
 
     // Collision resolution must run *inside* the substep loop: at 200 km/h a
@@ -2129,6 +2162,29 @@ export class Game {
       if (ref > 0) delta = this.raceTime - player.lapStart - ref;
     }
 
+    const rivalAhead = idx > 0 ? order[idx - 1].name : null;
+    const rivalBehind = idx < order.length - 1 ? order[idx + 1].name : null;
+    // "Battle" = someone is close enough that the next corner decides it.
+    const battle =
+      this.state === "racing" &&
+      !player.finished &&
+      ((gapAhead !== null && gapAhead < 1.1) || (gapBehind !== null && gapBehind < 1.1));
+
+    // Live timing tower: gap to the leader for every car on track.
+    const leader = order[0];
+    const orderRows = order.map((e) => {
+      const behind = (leader.unwrapped - e.unwrapped) * this.track.spacing;
+      const ref = Math.max(Math.abs(e.physics.speedF), 12);
+      return {
+        name: e.name,
+        color: e.color,
+        isPlayer: e === player,
+        gap: e === leader ? 0 : behind / ref,
+        lap: clamp(e.crossings, 1, this.totalLaps),
+        finished: e.finished,
+      };
+    });
+
     const lap = clamp(player.crossings, 1, this.totalLaps);
     const store = useGameStore.getState();
     store.setHud({
@@ -2163,6 +2219,10 @@ export class Game {
       damage: p.damage,
       conditions: this.weather.id === "clear" ? "" : this.weather.name,
       lowGrip: this.weather.grip < 0.95,
+      rivalAhead,
+      rivalBehind,
+      battle,
+      order: orderRows,
       revs: 0,
       surface: p.surface,
     });
@@ -2231,4 +2291,26 @@ function formatClock(t: number): string {
   const m = Math.floor(t / 60);
   const s = t % 60;
   return `${m}:${s.toFixed(3).padStart(6, "0")}`;
+}
+
+/**
+ * Blends a difficulty envelope with a driver personality.
+ *
+ * The difficulty remains the dominant term — Rookie rivals are slow whoever is
+ * driving — but each trait shifts the driver inside that envelope so the field
+ * spreads out naturally over a race.
+ */
+export function aiParamsFor(diff: DifficultyDef, d: DriverDef): AIParams {
+  const centred = (v: number) => v - 0.8; // traits cluster around 0.8
+  return {
+    topSpeed: MAX_SPEED * diff.topSpeedFactor * (1 + centred(d.pace) * 0.1),
+    cornerGrip: diff.cornerGrip * (1 + centred(d.pace) * 0.06 + centred(d.racecraft) * 0.03),
+    lookahead: diff.lookahead * (1 + centred(d.racecraft) * 0.25),
+    aggression: Math.min(1, diff.aggression * (0.95 + d.pace * 0.1)),
+    boldness: Math.min(1, 0.25 + d.aggression * 0.75),
+    boostUse: Math.min(1, diff.boostUse * (0.6 + d.boost * 0.8)),
+    sloppiness: diff.sloppiness * (1.6 - d.consistency),
+    racecraft: d.racecraft,
+    wetSkill: d.wet,
+  };
 }

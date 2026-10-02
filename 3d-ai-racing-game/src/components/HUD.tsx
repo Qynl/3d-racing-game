@@ -8,6 +8,41 @@ import Toasts from "./Toasts";
 
 const SECTOR_FLASH_MS = 2400;
 
+/** Live timing tower: the running order with gaps to the leader. */
+function TimingTower() {
+  const order = useGameStore((s) => s.hud.order);
+  if (order.length < 2) return null;
+  return (
+    <div className="hud-chip mt-2 hidden w-[186px] rounded-2xl px-2.5 py-2 md:block">
+      <div className="mb-1 px-1 text-[9px] uppercase tracking-[0.3em] text-cream/50">Order</div>
+      <ol>
+        {order.map((row, i) => (
+          <li
+            key={row.name}
+            className={cn(
+              "flex items-center gap-1.5 rounded px-1 py-[3px] text-[11px] tabular-nums",
+              row.isPlayer ? "bg-sand/15 text-cream" : "text-cream/70",
+            )}
+          >
+            <span className="w-3 text-right font-display font-bold text-cream/50">{i + 1}</span>
+            <span
+              aria-hidden
+              className="h-2 w-2 shrink-0 rounded-full"
+              style={{ background: `#${row.color.toString(16).padStart(6, "0")}` }}
+            />
+            <span className="flex-1 truncate font-display font-semibold uppercase tracking-wide">
+              {row.name}
+            </span>
+            <span className="text-[10px] text-cream/55">
+              {i === 0 ? "LEAD" : row.gap === null ? "—" : `+${row.gap.toFixed(1)}`}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 function Minimap() {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
@@ -309,9 +344,28 @@ export default function HUD({ touch = false }: { touch?: boolean }) {
             )}
           </div>
           {(hud.gapAhead !== null || hud.gapBehind !== null) && (
-            <div className="mt-1 flex items-center gap-3 text-[10px] uppercase tracking-[0.18em] text-cream/45 tabular-nums">
-              {hud.gapAhead !== null && <span className="text-ochre">▲ {formatGap(hud.gapAhead)}</span>}
-              {hud.gapBehind !== null && <span className="text-sand">▼ {formatGap(hud.gapBehind)}</span>}
+            <div
+              className={cn(
+                "mt-1 flex items-center gap-3 text-[10px] uppercase tracking-[0.18em] tabular-nums",
+                hud.battle ? "text-cream/80" : "text-cream/45",
+              )}
+            >
+              {hud.gapAhead !== null && (
+                <span className="text-ochre">
+                  ▲ {hud.rivalAhead ?? ""} {formatGap(hud.gapAhead)}
+                </span>
+              )}
+              {hud.gapBehind !== null && (
+                <span className="text-sand">
+                  ▼ {hud.rivalBehind ?? ""} {formatGap(hud.gapBehind)}
+                </span>
+              )}
+            </div>
+          )}
+          {hud.battle && (
+            <div className="mt-1 inline-flex items-center gap-1.5 rounded-full border border-clay-bright/50 bg-clay/20 px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.25em] text-clay-bright">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-clay-bright" />
+              Battle
             </div>
           )}
         </div>
@@ -321,6 +375,7 @@ export default function HUD({ touch = false }: { touch?: boolean }) {
       {/* top right: minimap + toasts */}
       <div className="absolute right-4 top-4 flex flex-col items-end md:right-7 md:top-6">
         {racing && <Minimap />}
+        {racing && <TimingTower />}
         <Toasts />
       </div>
 

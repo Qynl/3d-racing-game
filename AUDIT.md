@@ -244,3 +244,40 @@ Test coverage grew with the features: **126 unit tests** across physics, track g
 
 Tests: **151**, adding payout maths, upgrade clamping/pricing, weather-table sanity,
 precipitation recycling, garage persistence and two more React screen tests.
+
+## §8 Rivals that can actually race (third depth pass)
+
+The racing was still the weakest part of the game: three identical opponents driving a
+smoothed inside-of-corner line at a fixed fraction of the speed limit. This pass rebuilds
+the opposition from the ground up.
+
+- ✅ **A solved racing line** (`racingline.ts`). Multi-scale Laplacian relaxation clamped to
+  the track width, slew-rate limited so the line cannot snap sideways, low-passed against
+  saw-toothing and finally run through an iterative curvature cap — then a backward
+  braking / forward traction pass turns it into a per-sample **speed plan**. Measured: the
+  generated line is shorter than the centre line on all four circuits in both directions,
+  and peak curvature drops from 0.152 to ≤ 0.225 of the clamp on the worst hairpins.
+- ✅ **Rivals drive that line.** Corner entry speed comes from walking the plan a braking
+  distance ahead (`v² = v_corner² + 2·a·d`), so they brake *before* the corner instead of
+  reacting inside it, and they use the full width on exit.
+- ✅ **Seven named drivers with traits** — pace, aggression, consistency, racecraft, wet
+  skill and boost appetite. Traits are folded into the difficulty envelope rather than
+  replacing it, so Rookie is still Rookie while ATLAS, VECTOR, KESTREL, MAGPIE, OSPREY,
+  NOMAD and HARRIER all feel like different people.
+- ✅ **Racecraft.** An attack/defend state machine: they pick the side with room, commit
+  according to boldness, cover the inside when someone is on their gearbox, use the tow,
+  spend boost on exits and straights rather than randomly, and push harder on the last lap.
+- ✅ **Mistakes and recovery.** Low-consistency drivers lock a brake or run wide — more often
+  in the wet, and more often while fighting — then recover; getting beached triggers a
+  reverse-out. Incidents near the player are called out on the HUD.
+- ✅ **They no longer jump the start.** Rivals sit on the brakes through the countdown and
+  get away after a per-driver reaction time.
+- ✅ **Grids of 2 to 8 cars**, selectable in the menu with a driver preview (trait bars and a
+  one-line scouting report), two-abreast grid placement, per-car engine voices, and
+  championship points extended to **10/8/6/5/4/3/2/1**.
+- ✅ **Live timing tower** with the running order and gaps to the leader, plus a battle
+  indicator and the name of the car immediately ahead/behind.
+
+Tests: **180**, adding the racing-line solver (geometry, speed plan, both directions, all
+four circuits) and a behavioural AI suite that simulates full grids for 40–90 s of race time
+and asserts they stay on the road, spread out, respect grip, attack, err and launch cleanly.

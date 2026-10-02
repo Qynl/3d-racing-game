@@ -255,7 +255,11 @@ export function buildTrackMesh(track: Track, getHeight: (x: number, z: number) =
 }
 
 /** Optional driving-line overlay — a glowing ribbon through the ideal line. */
-export function buildRacingLine(track: Track, getHeight: (x: number, z: number) => number): THREE.Mesh {
+export function buildRacingLine(
+  track: Track,
+  getHeight: (x: number, z: number) => number,
+  line?: { offsets: Float32Array; plan: Float32Array },
+): THREE.Mesh {
   const M = track.count;
   const hw = track.halfWidth;
   const half = 0.42;
@@ -266,22 +270,39 @@ export function buildRacingLine(track: Track, getHeight: (x: number, z: number) 
   const fast = new THREE.Color(0x5fe08a);
   const slow = new THREE.Color(0xe2593f);
   const c = new THREE.Color();
-  // Smooth the "inside of the corner" offset to approximate a racing line.
-  const lateral = new Float32Array(M);
-  for (let i = 0; i < M; i++) {
-    const k = track.curvature[i];
-    lateral[i] = Math.max(-1, Math.min(1, k * 70)) * (hw - 2.1);
+  // Prefer the solved racing line; fall back to a smoothed inside-of-corner
+  // approximation when one has not been computed (e.g. in tests).
+  let smoothed: Float32Array;
+  if (line) {
+    smoothed = line.offsets;
+  } else {
+    const lateral = new Float32Array(M);
+    for (let i = 0; i < M; i++) {
+      const k = track.curvature[i];
+      lateral[i] = Math.max(-1, Math.min(1, k * 70)) * (hw - 2.1);
+    }
+    smoothed = new Float32Array(M);
+    const R = 40;
+    for (let i = 0; i < M; i++) {
+      let sum = 0;
+      for (let k = -R; k <= R; k++) sum += lateral[(i + k + M) % M];
+      smoothed[i] = sum / (2 * R + 1);
+    }
   }
-  const smoothed = new Float32Array(M);
-  const R = 40;
-  for (let i = 0; i < M; i++) {
-    let sum = 0;
-    for (let k = -R; k <= R; k++) sum += lateral[(i + k + M) % M];
-    smoothed[i] = sum / (2 * R + 1);
+  // Colour by how fast the line is at that point: green = flat out.
+  let vmin = Infinity;
+  let vmax = 0;
+  if (line) {
+    for (let i = 0; i < M; i++) {
+      if (line.plan[i] < vmin) vmin = line.plan[i];
+      if (line.plan[i] > vmax) vmax = line.plan[i];
+    }
   }
   for (let i = 0; i < M; i++) {
-    const kAbs = Math.abs(track.curvature[i]);
-    c.copy(fast).lerp(slow, Math.min(1, kAbs * 55));
+    const t = line
+      ? 1 - (line.plan[i] - vmin) / Math.max(1e-3, vmax - vmin)
+      : Math.min(1, Math.abs(track.curvature[i]) * 55);
+    c.copy(fast).lerp(slow, t);
     for (let j = 0; j < 2; j++) {
       track.offsetPoint(i, smoothed[i] + (j === 0 ? -half : half), tmp);
       const vi = i * 2 + j;

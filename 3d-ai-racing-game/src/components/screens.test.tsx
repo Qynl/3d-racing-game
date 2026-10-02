@@ -220,6 +220,55 @@ describe("screens render without crashing", () => {
     expect(container.textContent).toContain("Raising the dunes");
   });
 
+  it("shows the live timing tower with the running order", () => {
+    reset({
+      screen: "racing",
+      hud: {
+        ...defaultHud,
+        carCount: 3,
+        order: [
+          { name: "VECTOR", color: 0xd1a03c, isPlayer: false, gap: 0, lap: 2, finished: false },
+          { name: "YOU", color: 0x8899aa, isPlayer: true, gap: 1.4, lap: 2, finished: false },
+          { name: "ATLAS", color: 0x4f6b4a, isPlayer: false, gap: 3.2, lap: 2, finished: false },
+        ],
+      },
+    });
+    const { container } = render(<HUD />);
+    const text = container.textContent ?? "";
+    expect(text).toContain("VECTOR");
+    expect(text).toContain("LEAD");
+    expect(text).toContain("+1.4");
+  });
+
+  it("flags a battle and names the cars either side", () => {
+    reset({
+      screen: "racing",
+      hud: {
+        ...defaultHud,
+        gapAhead: 0.4,
+        gapBehind: 0.8,
+        rivalAhead: "KESTREL",
+        rivalBehind: "MAGPIE",
+        battle: true,
+      },
+    });
+    const { container } = render(<HUD />);
+    const text = container.textContent ?? "";
+    expect(text).toContain("KESTREL");
+    expect(text).toContain("MAGPIE");
+    expect(text.toLowerCase()).toContain("battle");
+  });
+
+  it("lets you size the grid and previews the rivals you will face", () => {
+    reset();
+    render(<Menu />);
+    const eight = screen.getByRole("button", { name: /^8 cars$/i });
+    fireEvent.click(eight);
+    expect(useGameStore.getState().settings.rivals).toBe(7);
+    expect(screen.getByText(/HARRIER/)).toBeTruthy();
+    expect(screen.getAllByText(/Racecraft/i).length).toBe(7);
+  });
+
   it("renders a fatal error screen instead of the game", () => {
     reset({ fatal: "This browser can't start WebGL." });
     const { container } = render(<App />);

@@ -7,6 +7,8 @@ import {
   CAR_COLORS,
   DEFAULT_KEYBINDS,
   DIFFICULTIES,
+  type DriverDef,
+  MAX_RIVALS,
   QUALITY_ORDER,
   QUALITY_PRESETS,
   TRACKS,
@@ -14,6 +16,7 @@ import {
   UPGRADE_MAX,
   type QualityId,
   type UpgradeId,
+  driversFor,
   keyLabel,
   upgradeCost,
   wildcardTrack,
@@ -156,6 +159,43 @@ function UpgradeRow({
 }
 
 const IS_TOUCH = typeof window !== "undefined" && ("ontouchstart" in window || navigator.maxTouchPoints > 0);
+
+/** Compact rival profile: who they are and what they're good at. */
+function DriverCard({ driver }: { driver: DriverDef }) {
+  const traits: Array<[string, number]> = [
+    ["Pace", driver.pace],
+    ["Aggro", driver.aggression],
+    ["Consistency", driver.consistency],
+    ["Racecraft", driver.racecraft],
+  ];
+  return (
+    <div className="rounded-lg border border-cream/10 bg-ink/40 px-2.5 py-2">
+      <div className="flex items-center gap-2">
+        <span
+          aria-hidden
+          className="h-2.5 w-2.5 shrink-0 rounded-full"
+          style={{ background: `#${driver.color.toString(16).padStart(6, "0")}` }}
+        />
+        <span className="font-display text-sm font-bold tracking-wide text-cream">
+          {driver.name}
+        </span>
+        <span className="truncate text-[11px] text-cream/50">{driver.blurb}</span>
+      </div>
+      <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-1">
+        {traits.map(([label, v]) => (
+          <div key={label} className="flex items-center gap-1.5">
+            <span className="w-[72px] shrink-0 text-[9px] uppercase tracking-[0.18em] text-cream/40">
+              {label}
+            </span>
+            <div className="flex-1">
+              <Bar value={v} tone={label === "Aggro" ? "clay" : "sand"} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function Menu() {
   const settings = useGameStore((s) => s.settings);
@@ -378,11 +418,11 @@ export default function Menu() {
                         </button>
                       </>
                     ) : (
-                      <>Four rounds, every circuit, points {"10/6/3/1"} — alternating direction.</>
+                      <>Four rounds, every circuit, points {"10/8/6/5/4/3/2/1"} — alternating direction.</>
                     )}
                   </div>
                 )}
-                {settings.mode === "race" && (
+                {settings.mode !== "timetrial" && (
                   <div>
                     <Label>Rival difficulty</Label>
                     <Segmented
@@ -391,6 +431,32 @@ export default function Menu() {
                       value={settings.difficulty}
                       onChange={(difficulty) => apply({ difficulty })}
                     />
+                  </div>
+                )}
+                {settings.mode !== "timetrial" && (
+                  <div>
+                    <Label>Grid size</Label>
+                    <div className="flex gap-2" role="group" aria-label="Grid size">
+                      {Array.from({ length: MAX_RIVALS }, (_, i) => i + 1).map((n) => (
+                        <button
+                          key={n}
+                          onClick={() => apply({ rivals: n })}
+                          aria-pressed={settings.rivals === n}
+                          aria-label={`${n + 1} cars`}
+                          className={cn(
+                            "seg h-9 flex-1 rounded-lg font-display text-base font-bold",
+                            settings.rivals === n && "active",
+                          )}
+                        >
+                          {n + 1}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="mt-2 flex flex-col gap-1.5">
+                      {driversFor(settings.rivals).map((d) => (
+                        <DriverCard key={d.id} driver={d} />
+                      ))}
+                    </div>
                   </div>
                 )}
                 <div>

@@ -2,7 +2,8 @@
 
 A 3D desert rally game that runs entirely in the browser. Procedural terrain, four seeded
 circuits plus an infinite Wildcard generator, three car classes with a credits-and-upgrades
-garage, dynamic weather, three AI rivals, a four-round championship, drift-charged boost,
+garage, dynamic weather, grids of up to eight cars driven by seven named AI rivals with
+their own personalities, a four-round championship, drift-charged boost,
 slipstreaming, launch control, damage, ghost cars and a full sector-timing system — built with React 19, Vite 7, Tailwind 4 and three.js. No game
 engine, no downloaded assets: every mesh, texture and sound is generated at runtime.
 
@@ -37,7 +38,8 @@ driving well.
 
 The lights are a mini-game. Feather the throttle during the countdown to park the rev needle
 in the green band, and you launch with extra drive. Bury it and you light up the tyres; fall
-asleep and you watch three rivals disappear.
+asleep and you watch the field disappear. The rivals wait for the lights too — each one has
+its own reaction time.
 
 **Running in traffic**
 
@@ -90,10 +92,10 @@ so menus stay fully keyboard-navigable.
 
 ### Modes
 
-- **Race** — three AI rivals, 1 to 7 laps, three difficulty tiers (Rookie / Pro / Legend).
+- **Race** — 1 to 7 AI rivals, 1 to 7 laps, three difficulty tiers (Rookie / Pro / Legend).
 - **Time trial** — you, the clock, and your own ghost replaying your best lap.
 - **Season** — a four-round championship over every circuit, alternating direction each round,
-  scoring 10 / 6 / 3 / 1. Standings are persisted, so you can finish the season tomorrow, and
+  scoring 10 / 8 / 6 / 5 / 4 / 3 / 2 / 1. Standings are persisted, so you can finish the season tomorrow, and
   the title is worth a 1,500 cr bonus.
 
 Any circuit can also be driven **in reverse**, and the **Wildcard** tile rolls a brand-new
@@ -115,8 +117,16 @@ Canyon) generated from control-point radii through a centripetal Catmull-Rom spl
 its own width, terrain and prop scatter — plus reverse layouts and an endless Wildcard
 generator that rolls shape, width and character from a seed.
 
-**AI** · Corner-speed-aware racing line with per-difficulty aggression, overtaking offsets,
-mistakes, stuck recovery, and positional engine audio. When the player finishes, rivals still
+**AI** · Every circuit gets a **solved racing line** — curvature-capped geometry relaxation
+followed by a braking/traction speed plan — and the rivals drive it: they look a braking
+distance ahead, hit the brakes before the corner, and use the full width on exit.
+
+Seven named drivers carry traits (pace, aggression, consistency, racecraft, wet skill, boost
+appetite) that are blended into the difficulty you picked, so the field spreads out and each
+car behaves like a person: ATLAS never errs, MAGPIE dive-bombs, KESTREL thrives in the rain.
+They attack on the side with room, defend the inside, use the tow, make mistakes and recover
+from them, push harder on the last lap, and get called out on the HUD when they run wide.
+A live timing tower shows the running order and gaps. When the player finishes, rivals still
 on track get their finish time extrapolated instead of a bogus DNF.
 
 **Timing** · Three sectors per lap, live delta, per-sector personal bests, lap records and race
@@ -189,7 +199,7 @@ why it can be unit-tested in a plain Node environment.
 | `npm run typecheck`  | `tsc --noEmit`                                     |
 | `npm run lint`       | ESLint flat config (TS + react-hooks)              |
 | `npm run format`     | Prettier write (`format:check` in CI)              |
-| `npm test`           | Vitest (151 tests)                                 |
+| `npm test`           | Vitest (180 tests)                                 |
 | `npm run check`      | typecheck + lint + test                            |
 
 ## Testing

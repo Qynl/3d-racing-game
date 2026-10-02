@@ -5,6 +5,7 @@ import {
   CAR_CLASSES,
   CAR_COLORS,
   DEFAULT_KEYBINDS,
+  MAX_RIVALS,
   NO_UPGRADES,
   type UpgradeId,
   type UpgradeLevels,
@@ -58,6 +59,8 @@ export interface Settings {
   keyBinds: Record<string, string[]>;
   /** Fixed weather, or "random" to roll it per race. */
   weather: WeatherId | "random";
+  /** Number of AI rivals on the grid (1..MAX_RIVALS). */
+  rivals: number;
 }
 
 /** Persisted career progress: money in the bank and parts bolted on. */
@@ -115,6 +118,25 @@ export interface HudData {
   conditions: string;
   /** True when the surface grip is below dry. */
   lowGrip: boolean;
+  /** Name of the car directly ahead on the road, if any. */
+  rivalAhead: string | null;
+  /** Name of the car directly behind on the road, if any. */
+  rivalBehind: string | null;
+  /** True while a rival is within a second either way. */
+  battle: boolean;
+  /** Live running order, leader first. */
+  order: RunningOrderRow[];
+}
+
+/** One row of the live timing tower. */
+export interface RunningOrderRow {
+  name: string;
+  color: number;
+  isPlayer: boolean;
+  /** Seconds behind the leader, 0 for the leader, null when unknown. */
+  gap: number | null;
+  lap: number;
+  finished: boolean;
 }
 
 export interface CarResult {
@@ -194,8 +216,8 @@ const RECORDS_KEY = "sundown-rally-records-v2";
 const SEASON_KEY = "sundown-rally-season-v1";
 const GARAGE_KEY = "sundown-rally-garage-v1";
 
-/** Points for P1..P4, F1-style but short. */
-export const SEASON_POINTS = [10, 6, 3, 1];
+/** Points for P1..P8, F1-style but short. Grids can now be up to eight cars. */
+export const SEASON_POINTS = [10, 8, 6, 5, 4, 3, 2, 1];
 
 export const defaultSettings: Settings = {
   mode: "race",
@@ -224,6 +246,7 @@ export const defaultSettings: Settings = {
   showNameTags: true,
   keyBinds: { ...DEFAULT_KEYBINDS },
   weather: "clear",
+  rivals: 3,
 };
 
 export const defaultGarage: Garage = {
@@ -273,6 +296,7 @@ function loadSettings(): Settings {
     if (merged.weather !== "random" && !WEATHER_ORDER.includes(merged.weather as WeatherId)) {
       merged.weather = base.weather;
     }
+    merged.rivals = Math.min(Math.max(1, Math.round(merged.rivals) || base.rivals), MAX_RIVALS);
     return merged;
   } catch {
     return base;
@@ -423,6 +447,10 @@ export const defaultHud: HudData = {
   launchRating: null,
   conditions: "",
   lowGrip: false,
+  rivalAhead: null,
+  rivalBehind: null,
+  battle: false,
+  order: [],
 };
 
 // ---------------------------------------------------------------- store
@@ -492,6 +520,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setSettings: (patch) =>
     set((s) => {
       const settings = { ...s.settings, ...patch };
+      // Field size is the one setting the UI can be asked for out of range
+      // (deep links, stale saves), and an eleven-car grid would not fit.
+      settings.rivals = Math.min(Math.max(1, Math.round(settings.rivals) || 1), MAX_RIVALS);
       saveSettings(settings);
       return { settings };
     }),

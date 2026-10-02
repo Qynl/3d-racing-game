@@ -473,4 +473,125 @@ export function wildcardTrack(seed: number): TrackDef {
 // ---------------------------------------------------------------- misc
 
 export const SECTOR_COUNT = 3;
-export const AI_NAMES = ["ATLAS", "VECTOR", "KESTREL", "MAGPIE", "OSPREY"];
+// ---------------------------------------------------------------- rival drivers
+
+/**
+ * Rival personalities. Every trait is 0..1 and is folded into the difficulty
+ * tuning at race start, so "Pro" still means Pro — but the four cars you face
+ * behave like four different people rather than four copies.
+ */
+export interface DriverDef {
+  id: string;
+  name: string;
+  /** Livery colour, kept distinct from the player's palette. */
+  color: number;
+  /** Outright pace: top speed and corner commitment. */
+  pace: number;
+  /** How close they will race and how hard they commit to a move. */
+  aggression: number;
+  /** Inverse mistake rate — low consistency means lock-ups and wide exits. */
+  consistency: number;
+  /** Line choice, defending and awareness in traffic. */
+  racecraft: number;
+  /** How well they cope with low grip. */
+  wet: number;
+  /** How cleverly they spend boost. */
+  boost: number;
+  blurb: string;
+}
+
+export const DRIVERS: DriverDef[] = [
+  {
+    id: "atlas",
+    name: "ATLAS",
+    color: 0x4f6b4a,
+    pace: 0.86,
+    aggression: 0.55,
+    consistency: 0.95,
+    racecraft: 0.8,
+    wet: 0.9,
+    boost: 0.6,
+    blurb: "Metronome. Never puts a wheel wrong.",
+  },
+  {
+    id: "vector",
+    name: "VECTOR",
+    color: 0xd1a03c,
+    pace: 0.94,
+    aggression: 0.9,
+    consistency: 0.62,
+    racecraft: 0.7,
+    wet: 0.5,
+    boost: 0.85,
+    blurb: "Fastest on the grid when it sticks.",
+  },
+  {
+    id: "kestrel",
+    name: "KESTREL",
+    color: 0x7f9ec2,
+    pace: 0.8,
+    aggression: 0.35,
+    consistency: 0.88,
+    racecraft: 0.92,
+    wet: 0.95,
+    boost: 0.55,
+    blurb: "Lives off your mistakes. Brilliant in the wet.",
+  },
+  {
+    id: "magpie",
+    name: "MAGPIE",
+    color: 0xb06a9c,
+    pace: 0.82,
+    aggression: 0.98,
+    consistency: 0.55,
+    racecraft: 0.6,
+    wet: 0.6,
+    boost: 0.95,
+    blurb: "Dive-bombs everything. Sometimes it works.",
+  },
+  {
+    id: "osprey",
+    name: "OSPREY",
+    color: 0x58a39a,
+    pace: 0.88,
+    aggression: 0.62,
+    consistency: 0.8,
+    racecraft: 0.85,
+    wet: 0.75,
+    boost: 0.7,
+    blurb: "Quietly quick. Devastating last lap.",
+  },
+  {
+    id: "nomad",
+    name: "NOMAD",
+    color: 0xc77b4a,
+    pace: 0.74,
+    aggression: 0.45,
+    consistency: 0.9,
+    racecraft: 0.7,
+    wet: 0.85,
+    boost: 0.4,
+    blurb: "Old school. Saves the car, saves the tyres.",
+  },
+  {
+    id: "harrier",
+    name: "HARRIER",
+    color: 0x8d6ec9,
+    pace: 0.97,
+    aggression: 0.75,
+    consistency: 0.7,
+    racecraft: 0.78,
+    wet: 0.65,
+    boost: 0.8,
+    blurb: "Qualifying specialist. Hates being behind.",
+  },
+];
+
+export const MAX_RIVALS = DRIVERS.length;
+
+/** Rival names in grid order. Derived so it can never drift from the roster. */
+export const AI_NAMES = DRIVERS.map((d) => d.name);
+
+export function driversFor(count: number): DriverDef[] {
+  return DRIVERS.slice(0, Math.max(0, Math.min(MAX_RIVALS, Math.round(count))));
+}

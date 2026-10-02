@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { NO_UPGRADES, UPGRADE_MAX, upgradeCost } from "./config";
+import { MAX_RIVALS, NO_UPGRADES, UPGRADE_MAX, upgradeCost } from "./config";
 import {
   defaultGarage,
   defaultHud,
@@ -201,7 +201,7 @@ describe("championship season", () => {
       isPlayer: name === "YOU",
     }));
 
-  it("awards 10/6/3/1 and sorts by points", () => {
+  it("awards 10/8/6/5 down the order and sorts by points", () => {
     const s = useGameStore.getState();
     s.startSeason({
       trackIds: ["sundown", "mesa"],
@@ -212,7 +212,7 @@ describe("championship season", () => {
     });
     const rows = useGameStore.getState().scoreSeason(order("YOU"));
     expect(rows[0]).toMatchObject({ name: "YOU", points: 10, gained: 10, isPlayer: true });
-    expect(rows.map((r) => r.points)).toEqual([10, 6, 3, 1]);
+    expect(rows.map((r) => r.points)).toEqual([10, 8, 6, 5]);
   });
 
   it("accumulates across rounds and finishes the season", () => {
@@ -229,7 +229,7 @@ describe("championship season", () => {
     expect(useGameStore.getState().season?.done).toBe(false);
     const rows = useGameStore.getState().scoreSeason(order("YOU"));
     const you = rows.find((r) => r.isPlayer)!;
-    expect(you.points).toBe(16); // 6 + 10
+    expect(you.points).toBe(18); // 8 + 10
     expect(rows[0].name).toBe("YOU");
     expect(useGameStore.getState().season?.done).toBe(true);
   });
@@ -265,6 +265,16 @@ describe("new settings", () => {
     expect(defaultSettings.showNameTags).toBe(true);
     expect(defaultSettings.wildcardSeed).toBeGreaterThan(0);
     expect(defaultSettings.keyBinds.throttle).toContain("w");
+  });
+
+  it("defaults to a three-rival grid and clamps absurd field sizes", () => {
+    expect(defaultSettings.rivals).toBe(3);
+    useGameStore.getState().setSettings({ rivals: 7 });
+    expect(useGameStore.getState().settings.rivals).toBe(7);
+    useGameStore.getState().setSettings({ rivals: 99 });
+    expect(useGameStore.getState().settings.rivals).toBeLessThanOrEqual(MAX_RIVALS);
+    useGameStore.getState().setSettings({ rivals: 0 });
+    expect(useGameStore.getState().settings.rivals).toBeGreaterThanOrEqual(1);
   });
 });
 
