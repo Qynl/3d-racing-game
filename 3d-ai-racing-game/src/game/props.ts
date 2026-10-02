@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { mergeGeometries, mergeVertices } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { Noise, mulberry32 } from "./noise";
-import { Track, TRACK_HALF_WIDTH, makeCheckerTexture } from "./track";
+import { Track, makeCheckerTexture } from "./track";
 import { Terrain, WORLD_RADIUS } from "./terrain";
 
 export interface Collider {
@@ -76,7 +76,13 @@ function makeShrubGeometry(seed: number): THREE.BufferGeometry {
   return g;
 }
 
-function makeMesaGeometry(noise: Noise, seed: number, rTop: number, rBot: number, h: number): THREE.BufferGeometry {
+function makeMesaGeometry(
+  noise: Noise,
+  seed: number,
+  rTop: number,
+  rBot: number,
+  h: number,
+): THREE.BufferGeometry {
   const rand = mulberry32(seed);
   let g: THREE.BufferGeometry = new THREE.CylinderGeometry(rTop, rBot, h, 11, 4, false);
   g = mergeVertices(g);
@@ -100,21 +106,29 @@ function makeMesaGeometry(noise: Noise, seed: number, rTop: number, rBot: number
   const count = pos.count;
   const p2 = g.attributes.position as THREE.BufferAttribute;
   const colors = new Float32Array(count * 3);
-  const bands = [new THREE.Color(0x9a5a46), new THREE.Color(0xb5745a), new THREE.Color(0x8a4d3f), new THREE.Color(0xc48a68)];
+  const bands = [
+    new THREE.Color(0x9a5a46),
+    new THREE.Color(0xb5745a),
+    new THREE.Color(0x8a4d3f),
+    new THREE.Color(0xc48a68),
+  ];
   const top = new THREE.Color(0xc99a72);
   const c = new THREE.Color();
   for (let f = 0; f < count / 3; f++) {
     const y = (p2.getY(f * 3) + p2.getY(f * 3 + 1) + p2.getY(f * 3 + 2)) / 3;
     const ny = Math.abs(
-      new THREE.Vector3().subVectors(
-        new THREE.Vector3(p2.getX(f * 3 + 1), p2.getY(f * 3 + 1), p2.getZ(f * 3 + 1)),
-        new THREE.Vector3(p2.getX(f * 3), p2.getY(f * 3), p2.getZ(f * 3))
-      ).cross(
-        new THREE.Vector3().subVectors(
-          new THREE.Vector3(p2.getX(f * 3 + 2), p2.getY(f * 3 + 2), p2.getZ(f * 3 + 2)),
-          new THREE.Vector3(p2.getX(f * 3), p2.getY(f * 3), p2.getZ(f * 3))
+      new THREE.Vector3()
+        .subVectors(
+          new THREE.Vector3(p2.getX(f * 3 + 1), p2.getY(f * 3 + 1), p2.getZ(f * 3 + 1)),
+          new THREE.Vector3(p2.getX(f * 3), p2.getY(f * 3), p2.getZ(f * 3)),
         )
-      ).normalize().y
+        .cross(
+          new THREE.Vector3().subVectors(
+            new THREE.Vector3(p2.getX(f * 3 + 2), p2.getY(f * 3 + 2), p2.getZ(f * 3 + 2)),
+            new THREE.Vector3(p2.getX(f * 3), p2.getY(f * 3), p2.getZ(f * 3)),
+          ),
+        )
+        .normalize().y,
     );
     const band = bands[Math.floor(((y + h / 2) / h) * 7) % bands.length];
     c.copy(ny > 0.7 ? top : band);
@@ -129,11 +143,18 @@ function makeMesaGeometry(noise: Noise, seed: number, rTop: number, rBot: number
   return g;
 }
 
-export function buildProps(noise: Noise, track: Track, terrain: Terrain, seed: number): PropsResult {
+export function buildProps(
+  noise: Noise,
+  track: Track,
+  terrain: Terrain,
+  seed: number,
+  density = 1,
+): PropsResult {
   const rand = mulberry32(seed);
   const group = new THREE.Group();
   const colliders: Collider[] = [];
-  const hw = TRACK_HALF_WIDTH;
+  const hw = track.halfWidth;
+  const dens = Math.max(0.15, density);
   const dummy = new THREE.Object3D();
   const col = new THREE.Color();
   const startP = track.points[0];
@@ -145,10 +166,14 @@ export function buildProps(noise: Noise, track: Track, terrain: Terrain, seed: n
   };
 
   // ---------- Rocks
-  const rockGeos = [makeRockGeometry(noise, 11, 1), makeRockGeometry(noise, 23, 1), makeRockGeometry(noise, 37, 2)];
+  const rockGeos = [
+    makeRockGeometry(noise, 11, 1),
+    makeRockGeometry(noise, 23, 1),
+    makeRockGeometry(noise, 37, 2),
+  ];
   const rockMat = new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0.02, flatShading: true });
   const rockPalette = [0x9c6a52, 0x8d7466, 0xa87a5e, 0x7d5a4c, 0xb08a6c];
-  const rocksPerVariant = 210;
+  const rocksPerVariant = Math.round(210 * dens);
   for (let v = 0; v < rockGeos.length; v++) {
     const mesh = new THREE.InstancedMesh(rockGeos[v], rockMat, rocksPerVariant);
     mesh.castShadow = true;
@@ -161,8 +186,7 @@ export function buildProps(noise: Noise, track: Track, terrain: Terrain, seed: n
       const rad = 20 + Math.sqrt(rand()) * (WORLD_RADIUS - 10);
       const x = Math.cos(ang) * rad;
       const z = Math.sin(ang) * rad;
-      const near = track.nearest(x, z, 40);
-      const d = near.index >= 0 ? track.distanceToTrack(x, z, near.index) : 99;
+      const d = terrain.trackInfoAt(x, z).lateral;
       const isClose = d < 40;
       const big = rand() < 0.18;
       const s = big ? 2.2 + rand() * 2.8 : 0.5 + rand() * 1.4;
@@ -191,7 +215,7 @@ export function buildProps(noise: Noise, track: Track, terrain: Terrain, seed: n
   // ---------- Cacti
   const cactusGeo = makeCactusGeometry();
   const cactusMat = new THREE.MeshStandardMaterial({ roughness: 0.85, metalness: 0 });
-  const cactusCount = 170;
+  const cactusCount = Math.round(170 * dens);
   const cactusMesh = new THREE.InstancedMesh(cactusGeo, cactusMat, cactusCount);
   cactusMesh.castShadow = true;
   cactusMesh.receiveShadow = true;
@@ -204,8 +228,7 @@ export function buildProps(noise: Noise, track: Track, terrain: Terrain, seed: n
       const rad = 30 + Math.sqrt(rand()) * (WORLD_RADIUS - 40);
       const x = Math.cos(ang) * rad;
       const z = Math.sin(ang) * rad;
-      const near = track.nearest(x, z, 40);
-      const d = near.index >= 0 ? track.distanceToTrack(x, z, near.index) : 99;
+      const d = terrain.trackInfoAt(x, z).lateral;
       if (d < hw + 3) continue;
       if (nearStart(x, z, 40)) continue;
       const h = terrain.getHeight(x, z);
@@ -231,7 +254,7 @@ export function buildProps(noise: Noise, track: Track, terrain: Terrain, seed: n
   // ---------- Shrubs
   const shrubGeo = makeShrubGeometry(5);
   const shrubMat = new THREE.MeshStandardMaterial({ roughness: 1, metalness: 0, flatShading: true });
-  const shrubCount = 650;
+  const shrubCount = Math.round(650 * dens);
   const shrubMesh = new THREE.InstancedMesh(shrubGeo, shrubMat, shrubCount);
   shrubMesh.castShadow = true;
   shrubMesh.receiveShadow = true;
@@ -245,8 +268,7 @@ export function buildProps(noise: Noise, track: Track, terrain: Terrain, seed: n
       const rad = 15 + Math.sqrt(rand()) * (WORLD_RADIUS - 20);
       const x = Math.cos(ang) * rad;
       const z = Math.sin(ang) * rad;
-      const near = track.nearest(x, z, 40);
-      const d = near.index >= 0 ? track.distanceToTrack(x, z, near.index) : 99;
+      const d = terrain.trackInfoAt(x, z).lateral;
       if (d < hw + 1.6) continue;
       if (nearStart(x, z, 30)) continue;
       const h = terrain.getHeight(x, z);
@@ -270,11 +292,15 @@ export function buildProps(noise: Noise, track: Track, terrain: Terrain, seed: n
 
   // ---------- Mesas
   {
-    const mesaMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, flatShading: true });
+    const mesaMat = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.95,
+      flatShading: true,
+    });
     const placedMesas: { x: number; z: number; r: number }[] = [];
     let tries = 0;
     let idx = 0;
-    while (placedMesas.length < 7 && tries < 400) {
+    while (placedMesas.length < Math.round(7 * Math.min(1.3, dens)) && tries < 400) {
       tries++;
       const ang = rand() * Math.PI * 2;
       const rad = 60 + rand() * 170;
@@ -397,7 +423,11 @@ export function buildProps(noise: Noise, track: Track, terrain: Terrain, seed: n
     gate.add(beam);
     const banner = new THREE.Mesh(
       new THREE.PlaneGeometry(hw * 2 + 3.2, 1.2),
-      new THREE.MeshStandardMaterial({ map: makeCheckerTexture(24, 2), roughness: 0.9, side: THREE.DoubleSide })
+      new THREE.MeshStandardMaterial({
+        map: makeCheckerTexture(24, 2),
+        roughness: 0.9,
+        side: THREE.DoubleSide,
+      }),
     );
     banner.position.set(0, 7.2, 0.46);
     gate.add(banner);
@@ -406,8 +436,16 @@ export function buildProps(noise: Noise, track: Track, terrain: Terrain, seed: n
     banner2.rotation.y = Math.PI;
     gate.add(banner2);
     // small flags on the beam
-    const flagMat = new THREE.MeshStandardMaterial({ color: 0xc2553a, roughness: 0.9, side: THREE.DoubleSide });
-    const flagMat2 = new THREE.MeshStandardMaterial({ color: 0xe9e2d2, roughness: 0.9, side: THREE.DoubleSide });
+    const flagMat = new THREE.MeshStandardMaterial({
+      color: 0xc2553a,
+      roughness: 0.9,
+      side: THREE.DoubleSide,
+    });
+    const flagMat2 = new THREE.MeshStandardMaterial({
+      color: 0xe9e2d2,
+      roughness: 0.9,
+      side: THREE.DoubleSide,
+    });
     for (let i = -3; i <= 3; i++) {
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.6, 5), pillarMat);
       pole.position.set(i * 2.6, 8.7, 0);
@@ -456,7 +494,7 @@ export function buildProps(noise: Noise, track: Track, terrain: Terrain, seed: n
     const crowdGeo = new THREE.CapsuleGeometry(0.22, 0.6, 2, 6);
     crowdGeo.translate(0, 0.5, 0);
     const crowdMat = new THREE.MeshStandardMaterial({ roughness: 0.9 });
-    const crowdCount = 120;
+    const crowdCount = Math.round(120 * dens);
     const crowd = new THREE.InstancedMesh(crowdGeo, crowdMat, crowdCount);
     crowd.castShadow = true;
     const crowdPalette = [0xd9c7a9, 0x6c4a3a, 0x3e4a5c, 0xb5473a, 0x5f6e4a, 0xe3d6c0, 0x2f2f33, 0xd1a03c];

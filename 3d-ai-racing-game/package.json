@@ -1,14 +1,25 @@
 {
-  "name": "react-vite-tailwind",
+  "name": "sundown-rally",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "build": "tsc --noEmit && vite build",
+    "build:fast": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"*.{ts,json,md}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm run lint && npm run test"
   },
   "dependencies": {
+    "@fontsource/barlow": "^5.3.0",
+    "@fontsource/barlow-condensed": "^5.3.0",
     "clsx": "2.1.1",
     "react": "19.2.6",
     "react-dom": "19.2.6",
@@ -18,15 +29,43 @@
     "zustand": "^5.0.15"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@tailwindcss/vite": "4.1.17",
+    "@testing-library/react": "^16.3.3",
     "@types/node": "22.19.17",
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
     "@types/three": "^0.186.0",
     "@vitejs/plugin-react": "5.1.1",
+    "eslint": "^10.11.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.7",
+    "globals": "^17.13.0",
+    "happy-dom": "^20.14.5",
+    "prettier": "^3.9.9",
     "tailwindcss": "4.1.17",
     "typescript": "5.9.3",
+    "typescript-eslint": "^8.71.0",
     "vite": "7.3.2",
-    "vite-plugin-singlefile": "2.3.0"
-  }
+    "vite-plugin-singlefile": "2.3.0",
+    "vitest": "^5.0.3"
+  },
+  "description": "Sundown Rally — a 3D desert racing game in the browser. Procedural terrain, AI rivals, drift boost and ghost cars. No engine, no assets, just three.js.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Qynl/3d-racing-game.git"
+  },
+  "keywords": [
+    "three.js",
+    "racing",
+    "game",
+    "webgl",
+    "react",
+    "vite",
+    "procedural"
+  ]
 }

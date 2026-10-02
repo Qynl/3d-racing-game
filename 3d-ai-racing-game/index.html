@@ -2,19 +2,50 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <meta name="theme-color" content="#1d1a17" />
-    <meta name="description" content="Sundown Rally — a 3D desert rally race against three AI drivers at golden hour." />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=Barlow:wght@400;500;600&display=swap"
-      rel="stylesheet"
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
+    <meta name="theme-color" content="#1d1a17" />
+    <meta
+      name="description"
+      content="Sundown Rally — a 3D desert rally race against three AI drivers at golden hour. Drift for boost, chase your ghost, beat the machines."
+    />
+    <meta name="color-scheme" content="dark" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Sundown Rally" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Sundown Rally — 3D Desert Racing" />
+    <meta
+      property="og:description"
+      content="Drift the hairpins, charge your boost and beat three AI drivers before the sun goes down. Runs in your browser, no install."
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Sundown Rally — 3D Desert Racing" />
+    <meta
+      name="twitter:description"
+      content="Drift the hairpins, charge your boost and beat three AI drivers before the sun goes down."
+    />
+
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231d1a17'/%3E%3Ccircle cx='16' cy='13' r='7' fill='%23d8b07c'/%3E%3Cpath d='M3 22h26v3H3z' fill='%23c2553a'/%3E%3Cpath d='M3 26h26v2H3z' fill='%238a5f41'/%3E%3C/svg%3E"
+    />
+
+    <link rel="apple-touch-icon" href="./icon.svg" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+
     <title>Sundown Rally — 3D Desert Racing</title>
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <div style="padding: 2rem; color: #f3ead9; font-family: sans-serif">
+        Sundown Rally needs JavaScript and WebGL to run.
+      </div>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

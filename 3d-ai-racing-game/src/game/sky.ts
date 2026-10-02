@@ -4,7 +4,7 @@ import { mulberry32 } from "./noise";
 export const SUN_DIR = new THREE.Vector3(
   Math.cos(THREE.MathUtils.degToRad(24)) * Math.sin(THREE.MathUtils.degToRad(-52)),
   Math.sin(THREE.MathUtils.degToRad(24)),
-  Math.cos(THREE.MathUtils.degToRad(24)) * Math.cos(THREE.MathUtils.degToRad(-52))
+  Math.cos(THREE.MathUtils.degToRad(24)) * Math.cos(THREE.MathUtils.degToRad(-52)),
 ).normalize();
 
 export const HORIZON_COLOR = new THREE.Color(0xf0b58a);
@@ -70,12 +70,18 @@ export function createSkyDome(): THREE.Mesh {
   return mesh;
 }
 
+const UP = new THREE.Vector3(0, 1, 0);
+
 export interface CloudField {
   group: THREE.Group;
   update: (dt: number) => void;
 }
 
-export function createClouds(seed: number): CloudField {
+/**
+ * All cloud puffs live in a single InstancedMesh: 16 drifting cloud groups used
+ * to cost ~80 draw calls, now they cost one.
+ */
+export function createClouds(seed: number, count = 16): CloudField {
   const rand = mulberry32(seed);
   const group = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({
@@ -87,40 +93,89 @@ export function createClouds(seed: number): CloudField {
     emissiveIntensity: 0.25,
   });
   const base = new THREE.IcosahedronGeometry(1, 1);
-  const clouds: { mesh: THREE.Group; speed: number }[] = [];
-  for (let i = 0; i < 16; i++) {
-    const g = new THREE.Group();
+
+  interface Puff {
+    cloud: number;
+    local: THREE.Matrix4;
+  }
+  const puffs: Puff[] = [];
+  const origins: THREE.Vector3[] = [];
+  const rotations: number[] = [];
+  const speeds: number[] = [];
+  const pos = new THREE.Vector3();
+  const quat = new THREE.Quaternion();
+  const scl = new THREE.Vector3();
+  const euler = new THREE.Euler();
+
+  for (let i = 0; i < count; i++) {
     const parts = 3 + Math.floor(rand() * 4);
     const size = 14 + rand() * 24;
     for (let p = 0; p < parts; p++) {
-      const m = new THREE.Mesh(base, mat);
       const s = size * (0.45 + rand() * 0.55);
-      m.scale.set(s, s * (0.32 + rand() * 0.2), s * (0.7 + rand() * 0.5));
-      m.position.set((rand() - 0.5) * size * 1.6, (rand() - 0.5) * size * 0.25, (rand() - 0.5) * size * 0.8);
-      m.rotation.y = rand() * Math.PI;
-      g.add(m);
+      scl.set(s, s * (0.32 + rand() * 0.2), s * (0.7 + rand() * 0.5));
+      pos.set((rand() - 0.5) * size * 1.6, (rand() - 0.5) * size * 0.25, (rand() - 0.5) * size * 0.8);
+      euler.set(0, rand() * Math.PI, 0);
+      quat.setFromEuler(euler);
+      puffs.push({ cloud: i, local: new THREE.Matrix4().compose(pos, quat, scl) });
     }
     const ang = rand() * Math.PI * 2;
     const dist = 180 + rand() * 520;
-    g.position.set(Math.cos(ang) * dist, 150 + rand() * 90, Math.sin(ang) * dist);
-    g.rotation.y = rand() * Math.PI * 2;
-    group.add(g);
-    clouds.push({ mesh: g, speed: 1.2 + rand() * 1.5 });
+    origins.push(new THREE.Vector3(Math.cos(ang) * dist, 150 + rand() * 90, Math.sin(ang) * dist));
+    rotations.push(rand() * Math.PI * 2);
+    speeds.push(1.2 + rand() * 1.5);
   }
-  const update = (dt: number) => {
-    for (const c of clouds) {
-      c.mesh.position.x += c.speed * dt;
-      if (c.mesh.position.x > 760) c.mesh.position.x = -760;
+
+  const inst = new THREE.InstancedMesh(base, mat, puffs.length);
+  inst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  // One big billboard field around the whole valley — culling it per-instance
+  // would cost more than it saves.
+  inst.frustumCulled = false;
+  inst.matrixAutoUpdate = false;
+  group.add(inst);
+
+  const cloudMatrix = new THREE.Matrix4();
+  const out = new THREE.Matrix4();
+  const idQuat = new THREE.Quaternion();
+  const one = new THREE.Vector3(1, 1, 1);
+
+  // Preallocated so the per-frame update stays garbage-free.
+  const cloudMats = origins.map(() => new THREE.Matrix4());
+
+  const write = () => {
+    for (let i = 0; i < origins.length; i++) {
+      idQuat.setFromAxisAngle(UP, rotations[i]);
+      cloudMats[i].compose(origins[i], idQuat, one);
     }
+    for (let p = 0; p < puffs.length; p++) {
+      cloudMatrix.copy(cloudMats[puffs[p].cloud]);
+      out.multiplyMatrices(cloudMatrix, puffs[p].local);
+      inst.setMatrixAt(p, out);
+    }
+    inst.instanceMatrix.needsUpdate = true;
   };
+  write();
+
+  const update = (dt: number) => {
+    for (let i = 0; i < origins.length; i++) {
+      origins[i].x += speeds[i] * dt;
+      if (origins[i].x > 760) origins[i].x = -760;
+    }
+    write();
+  };
+
   return { group, update };
 }
 
-export function createLighting(scene: THREE.Scene): { sun: THREE.DirectionalLight; hemi: THREE.HemisphereLight } {
+/** Sun + fill lights. Only the sun is returned — it is the only one we retune. */
+export function createLighting(
+  scene: THREE.Scene,
+  opts: { shadows?: boolean; mapSize?: number } = {},
+): THREE.DirectionalLight {
+  const mapSize = opts.mapSize ?? 2048;
   const sun = new THREE.DirectionalLight(0xffd4a4, 3.1);
   sun.position.copy(SUN_DIR).multiplyScalar(140);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  sun.castShadow = opts.shadows !== false;
+  sun.shadow.mapSize.set(mapSize, mapSize);
   const cam = sun.shadow.camera;
   cam.left = -75;
   cam.right = 75;
@@ -134,9 +189,7 @@ export function createLighting(scene: THREE.Scene): { sun: THREE.DirectionalLigh
   scene.add(sun);
   scene.add(sun.target);
 
-  const hemi = new THREE.HemisphereLight(0xb9c4dc, 0xa8673f, 0.95);
-  scene.add(hemi);
-  const ambient = new THREE.AmbientLight(0xffe0c0, 0.12);
-  scene.add(ambient);
-  return { sun, hemi };
+  scene.add(new THREE.HemisphereLight(0xb9c4dc, 0xa8673f, 0.95));
+  scene.add(new THREE.AmbientLight(0xffe0c0, 0.12));
+  return sun;
 }

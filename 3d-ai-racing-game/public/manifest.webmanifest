@@ -1,0 +1,20 @@
+{
+  "name": "Sundown Rally",
+  "short_name": "Sundown",
+  "description": "A 3D desert rally race against AI drivers at golden hour. Drift for boost, chase your ghost, beat the machines.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#1d1a17",
+  "theme_color": "#1d1a17",
+  "categories": ["games", "entertainment"],
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

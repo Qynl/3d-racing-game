@@ -1,28 +1,70 @@
-import { CAR_COLORS, Difficulty, formatTime, useGameStore } from "../game/store";
+import { useState } from "react";
 import { gameHolder } from "../game/Game";
+import {
+  CAR_CLASSES,
+  CAR_COLORS,
+  DIFFICULTIES,
+  QUALITY_ORDER,
+  QUALITY_PRESETS,
+  TRACKS,
+  type QualityId,
+} from "../game/config";
+import {
+  type Difficulty,
+  type RaceMode,
+  type TouchSteerMode,
+  formatTime,
+  raceKey,
+  useGameStore,
+} from "../game/store";
 import { cn } from "../utils/cn";
+import { Bar, Kbd, Label, Segmented, Slider, Toggle } from "./ui";
 
-const DIFFS: { id: Difficulty; label: string; desc: string }[] = [
-  { id: "rookie", label: "Rookie", desc: "Forgiving rivals" },
-  { id: "pro", label: "Pro", desc: "A real fight" },
-  { id: "legend", label: "Legend", desc: "Flawless machines" },
+const DIFF_BLURBS: Record<Difficulty, string> = {
+  rookie: "Forgiving",
+  pro: "A real fight",
+  legend: "Flawless",
+};
+
+const DIFFS: { id: Difficulty; label: string; desc: string }[] = (["rookie", "pro", "legend"] as const).map(
+  (id) => ({ id, label: DIFFICULTIES[id].name, desc: DIFF_BLURBS[id] }),
+);
+
+const MODES: { id: RaceMode; label: string; desc: string }[] = [
+  { id: "race", label: "Race", desc: "3 AI rivals" },
+  { id: "timetrial", label: "Time trial", desc: "You vs ghost" },
 ];
+
+type Tab = "race" | "car" | "options";
+
+const IS_TOUCH = typeof window !== "undefined" && ("ontouchstart" in window || navigator.maxTouchPoints > 0);
 
 export default function Menu() {
   const settings = useGameStore((s) => s.settings);
   const setSettings = useGameStore((s) => s.setSettings);
-  const bestTimes = useGameStore((s) => s.bestTimes);
+  const records = useGameStore((s) => s.records);
   const loaded = useGameStore((s) => s.loaded);
+  const [tab, setTab] = useState<Tab>("race");
+
+  const apply = (patch: Parameters<typeof setSettings>[0]) => {
+    setSettings(patch);
+    const next = useGameStore.getState().settings;
+    gameHolder.game?.applySettings(next);
+  };
 
   const start = () => {
     if (!loaded) return;
     gameHolder.game?.startRace(useGameStore.getState().settings);
   };
 
-  const best = bestTimes[settings.difficulty];
+  const rec = records[settings.trackId];
+  const bestRace =
+    rec?.races?.[raceKey(settings.difficulty, settings.laps, settings.mode, settings.carClassId)] ?? null;
+  const bestLap = rec?.bestLap ?? null;
+  const carClass = CAR_CLASSES.find((c) => c.id === settings.carClassId) ?? CAR_CLASSES[0];
 
   return (
-    <div className="pointer-events-none fixed inset-0 flex flex-col">
+    <div className="pointer-events-none fixed inset-0 flex flex-col safe-pad">
       {/* top bar */}
       <div className="flex items-center justify-between px-6 pt-5 md:px-10">
         <div className="fade-up flex items-center gap-3 text-[11px] uppercase tracking-[0.3em] text-cream/60">
@@ -30,101 +72,320 @@ export default function Menu() {
           Golden Hour Circuit
         </div>
         <button
-          onClick={() => {
-            const m = !settings.muted;
-            setSettings({ muted: m });
-            gameHolder.game?.setMuted(m);
-          }}
+          onClick={() => apply({ muted: !settings.muted })}
           className="btn-ghost pointer-events-auto rounded-full px-4 py-1.5 text-[11px] uppercase tracking-[0.25em]"
         >
           {settings.muted ? "Sound off" : "Sound on"}
         </button>
       </div>
 
-      <div className="flex flex-1 flex-col justify-end px-6 pb-6 md:flex-row md:items-end md:justify-between md:px-10 md:pb-10">
+      <div className="flex flex-1 flex-col justify-end gap-6 overflow-y-auto px-6 pb-6 md:flex-row md:items-end md:justify-between md:overflow-visible md:px-10 md:pb-10">
         {/* title */}
-        <div className="mb-6 md:mb-0 md:max-w-xl">
-          <h1 className="title-shadow fade-up font-display text-[72px] font-extrabold uppercase leading-[0.86] tracking-tight text-cream sm:text-[96px] md:text-[128px]">
+        <div className="shrink-0 md:max-w-xl">
+          <h1 className="title-shadow fade-up font-display text-[64px] font-extrabold uppercase leading-[0.86] tracking-tight text-cream sm:text-[96px] md:text-[128px]">
             Sundown
             <br />
             <span className="text-sand">Rally</span>
           </h1>
           <p className="fade-up fade-up-1 mt-4 max-w-md font-body text-sm leading-relaxed text-cream/70 md:text-base">
-            Three laps of hard-packed desert against three relentless AI drivers. Brake late, slide through
-            the hairpins, and beat the machines before the sun goes down.
+            Hard-packed desert, three relentless AI drivers and a sun that's already going down. Slide through
+            the hairpins to charge your boost, hunt your own ghost, and beat the machines.
           </p>
-          <div className="fade-up fade-up-2 mt-5 hidden flex-wrap gap-x-6 gap-y-2 text-[11px] uppercase tracking-[0.22em] text-cream/55 md:flex">
-            <span><kbd className="text-cream/90">W A S D</kbd> / arrows · drive</span>
-            <span><kbd className="text-cream/90">Space</kbd> · handbrake</span>
-            <span><kbd className="text-cream/90">C</kbd> · camera</span>
-            <span><kbd className="text-cream/90">Esc</kbd> · pause</span>
+          <div className="fade-up fade-up-2 mt-5 hidden flex-wrap gap-x-5 gap-y-2 text-[11px] uppercase tracking-[0.18em] text-cream/55 md:flex">
+            <span>
+              <Kbd>W A S D</Kbd> drive
+            </span>
+            <span>
+              <Kbd>Shift</Kbd> boost
+            </span>
+            <span>
+              <Kbd>Space</Kbd> handbrake
+            </span>
+            <span>
+              <Kbd>B</Kbd> look back
+            </span>
+            <span>
+              <Kbd>R</Kbd> respawn
+            </span>
+            <span>
+              <Kbd>C</Kbd> camera
+            </span>
+            <span>
+              <Kbd>Esc</Kbd> pause
+            </span>
           </div>
         </div>
 
         {/* settings panel */}
-        <div className="panel pointer-events-auto fade-up fade-up-2 w-full rounded-2xl p-5 md:w-[380px] md:p-6">
-          <div className="mb-4">
-            <div className="mb-2 text-[11px] uppercase tracking-[0.25em] text-cream/55">Rival difficulty</div>
-            <div className="grid grid-cols-3 gap-2">
-              {DIFFS.map((d) => (
-                <button
-                  key={d.id}
-                  onClick={() => setSettings({ difficulty: d.id })}
-                  className={cn("seg rounded-xl px-2 py-2.5 text-left", settings.difficulty === d.id && "active")}
-                >
-                  <div className="font-display text-lg font-bold uppercase leading-none tracking-wide">{d.label}</div>
-                  <div className="mt-1 text-[10px] uppercase tracking-[0.12em] opacity-70">{d.desc}</div>
-                </button>
-              ))}
-            </div>
+        <div className="panel pointer-events-auto fade-up fade-up-2 w-full shrink-0 rounded-2xl p-5 md:w-[400px] md:p-6">
+          <div className="mb-4 grid grid-cols-3 gap-1 rounded-xl bg-cream/5 p-1">
+            {(
+              [
+                ["race", "Race"],
+                ["car", "Car"],
+                ["options", "Options"],
+              ] as [Tab, string][]
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => setTab(id)}
+                className={cn(
+                  "rounded-lg px-2 py-1.5 font-display text-sm font-bold uppercase tracking-wide transition-colors",
+                  tab === id ? "bg-sand/20 text-cream" : "text-cream/55 hover:text-cream/80",
+                )}
+              >
+                {label}
+              </button>
+            ))}
           </div>
 
-          <div className="mb-4 grid grid-cols-[1fr_auto] gap-4">
-            <div>
-              <div className="mb-2 text-[11px] uppercase tracking-[0.25em] text-cream/55">Livery</div>
-              <div className="flex gap-2">
-                {CAR_COLORS.map((c, i) => (
-                  <button
-                    key={c.name}
-                    title={c.name}
-                    onClick={() => setSettings({ carColor: i })}
-                    className={cn(
-                      "h-8 w-8 rounded-full border-2 transition-transform",
-                      settings.carColor === i ? "scale-110 border-cream" : "border-white/15 hover:scale-105"
-                    )}
-                    style={{ background: "#" + c.hex.toString(16).padStart(6, "0") }}
+          <div className="max-h-[42vh] overflow-y-auto pr-1 md:max-h-[46vh]">
+            {tab === "race" && (
+              <div className="flex flex-col gap-4">
+                <div>
+                  <Label>Mode</Label>
+                  <Segmented
+                    ariaLabel="Race mode"
+                    options={MODES}
+                    value={settings.mode}
+                    onChange={(mode) => apply({ mode })}
                   />
-                ))}
+                </div>
+                <div>
+                  <Label>Circuit</Label>
+                  <div role="radiogroup" aria-label="Circuit" className="grid grid-cols-2 gap-2">
+                    {TRACKS.map((t) => (
+                      <button
+                        key={t.id}
+                        role="radio"
+                        aria-checked={settings.trackId === t.id}
+                        onClick={() => {
+                          apply({ trackId: t.id });
+                          void gameHolder.game?.changeTrack(t.id);
+                        }}
+                        className={cn(
+                          "seg rounded-xl px-3 py-2 text-left",
+                          settings.trackId === t.id && "active",
+                        )}
+                      >
+                        <div className="font-display text-base font-bold uppercase leading-none">
+                          {t.name}
+                        </div>
+                        <div className="mt-1 text-[10px] uppercase tracking-[0.1em] opacity-70">
+                          {t.subtitle}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {settings.mode === "race" && (
+                  <div>
+                    <Label>Rival difficulty</Label>
+                    <Segmented
+                      ariaLabel="Rival difficulty"
+                      options={DIFFS}
+                      value={settings.difficulty}
+                      onChange={(difficulty) => apply({ difficulty })}
+                    />
+                  </div>
+                )}
+                <div>
+                  <Label>Laps</Label>
+                  <div className="flex gap-2">
+                    {[1, 2, 3, 5, 7].map((n) => (
+                      <button
+                        key={n}
+                        onClick={() => apply({ laps: n })}
+                        className={cn(
+                          "seg h-9 flex-1 rounded-lg font-display text-base font-bold",
+                          settings.laps === n && "active",
+                        )}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
-            </div>
-            <div>
-              <div className="mb-2 text-[11px] uppercase tracking-[0.25em] text-cream/55">Laps</div>
-              <div className="flex gap-1.5">
-                {[2, 3, 5].map((n) => (
-                  <button
-                    key={n}
-                    onClick={() => setSettings({ laps: n })}
-                    className={cn("seg h-8 w-9 rounded-lg font-display text-base font-bold", settings.laps === n && "active")}
-                  >
-                    {n}
-                  </button>
-                ))}
+            )}
+
+            {tab === "car" && (
+              <div className="flex flex-col gap-4">
+                <div>
+                  <Label>Chassis</Label>
+                  <div className="flex flex-col gap-2">
+                    {CAR_CLASSES.map((c) => (
+                      <button
+                        key={c.id}
+                        onClick={() => apply({ carClassId: c.id })}
+                        className={cn(
+                          "seg rounded-xl px-3 py-2.5 text-left",
+                          settings.carClassId === c.id && "active",
+                        )}
+                      >
+                        <div className="font-display text-lg font-bold uppercase leading-none">{c.name}</div>
+                        <div className="mt-1 text-[10px] uppercase tracking-[0.1em] opacity-70">
+                          {c.blurb}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-cream/10 p-3">
+                  <div className="mb-2 font-display text-sm font-bold uppercase tracking-wide text-cream/80">
+                    {carClass.name}
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    {(
+                      [
+                        ["Top speed", carClass.bars.speed],
+                        ["Acceleration", carClass.bars.accel],
+                        ["Grip", carClass.bars.grip],
+                      ] as [string, number][]
+                    ).map(([k, v]) => (
+                      <div key={k}>
+                        <div className="mb-1 flex justify-between text-[10px] uppercase tracking-[0.2em] text-cream/50">
+                          <span>{k}</span>
+                        </div>
+                        <Bar value={v} />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <Label>Livery</Label>
+                  <div className="flex flex-wrap gap-2">
+                    {CAR_COLORS.map((c, i) => (
+                      <button
+                        key={c.name}
+                        title={c.name}
+                        aria-label={`Livery ${c.name}`}
+                        onClick={() => apply({ carColor: i })}
+                        className={cn(
+                          "h-9 w-9 rounded-full border-2 transition-transform",
+                          settings.carColor === i
+                            ? "scale-110 border-cream"
+                            : "border-white/15 hover:scale-105",
+                        )}
+                        style={{ background: "#" + c.hex.toString(16).padStart(6, "0") }}
+                      />
+                    ))}
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
+
+            {tab === "options" && (
+              <div className="flex flex-col gap-4">
+                <div>
+                  <Label>Graphics</Label>
+                  <Segmented
+                    ariaLabel="Graphics quality"
+                    columns={4}
+                    options={QUALITY_ORDER.map((q: QualityId) => ({
+                      id: q,
+                      label: QUALITY_PRESETS[q].name,
+                    }))}
+                    value={settings.quality}
+                    onChange={(quality) => apply({ quality })}
+                  />
+                </div>
+                <Toggle
+                  label="Auto performance"
+                  hint="Drop resolution if the frame rate sags"
+                  checked={settings.autoQuality}
+                  onChange={(autoQuality) => apply({ autoQuality })}
+                />
+                <Slider
+                  label="Master volume"
+                  value={settings.masterVolume}
+                  onChange={(masterVolume) => apply({ masterVolume, muted: false })}
+                />
+                <Slider
+                  label="Music"
+                  value={settings.musicVolume}
+                  onChange={(musicVolume) => apply({ musicVolume })}
+                />
+                <Slider
+                  label="Steering sensitivity"
+                  min={0.5}
+                  max={1.8}
+                  step={0.05}
+                  value={settings.steerSensitivity}
+                  display={`${settings.steerSensitivity.toFixed(2)}×`}
+                  onChange={(steerSensitivity) => apply({ steerSensitivity })}
+                />
+                <Toggle
+                  label="Ghost car"
+                  hint="Race your best lap"
+                  checked={settings.showGhost}
+                  onChange={(showGhost) => apply({ showGhost })}
+                />
+                <Toggle
+                  label="Racing line"
+                  hint="Green = flat out, red = brake"
+                  checked={settings.showRacingLine}
+                  onChange={(showRacingLine) => apply({ showRacingLine })}
+                />
+                <Toggle
+                  label="Reduced motion"
+                  hint="No camera shake or FOV pumping"
+                  checked={settings.reducedMotion}
+                  onChange={(reducedMotion) => apply({ reducedMotion })}
+                />
+                {IS_TOUCH && (
+                  <div>
+                    <Label>Touch steering</Label>
+                    <Segmented
+                      ariaLabel="Touch steering style"
+                      columns={3}
+                      options={
+                        [
+                          { id: "slider", label: "Pad" },
+                          { id: "buttons", label: "Buttons" },
+                          { id: "tilt", label: "Tilt" },
+                        ] as { id: TouchSteerMode; label: string }[]
+                      }
+                      value={settings.touchSteer}
+                      onChange={(touchSteer) => {
+                        apply({ touchSteer });
+                        if (touchSteer === "tilt") {
+                          void gameHolder.game?.input.requestTiltPermission().then(() => {
+                            gameHolder.game?.input.calibrateTilt();
+                          });
+                        }
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <button
             onClick={start}
             disabled={!loaded}
-            className="btn-primary flex w-full items-center justify-between rounded-xl px-5 py-3.5 font-display text-2xl font-extrabold uppercase tracking-wider disabled:opacity-60"
+            className="btn-primary mt-4 flex w-full items-center justify-between rounded-xl px-5 py-3.5 font-display text-2xl font-extrabold uppercase tracking-wider disabled:opacity-60"
           >
-            <span>{loaded ? "Start race" : "Building circuit…"}</span>
+            <span>
+              {loaded ? (settings.mode === "race" ? "Start race" : "Start time trial") : "Building…"}
+            </span>
             <span className="text-base opacity-80">→</span>
           </button>
 
-          <div className="mt-3 flex items-center justify-between text-[11px] uppercase tracking-[0.2em] text-cream/50">
-            <span>Best · {DIFFS.find((d) => d.id === settings.difficulty)?.label}</span>
-            <span className="font-display text-base tracking-wide text-sand">{best ? formatTime(best) : "No time set"}</span>
+          <div className="mt-3 grid grid-cols-2 gap-3 text-[10px] uppercase tracking-[0.18em] text-cream/50">
+            <div>
+              <div>Best lap</div>
+              <div className="font-display text-base tracking-wide text-sand">
+                {bestLap ? formatTime(bestLap) : "—"}
+              </div>
+            </div>
+            <div className="text-right">
+              <div>Best race</div>
+              <div className="font-display text-base tracking-wide text-sand">
+                {bestRace ? formatTime(bestRace) : "—"}
+              </div>
+            </div>
           </div>
         </div>
       </div>

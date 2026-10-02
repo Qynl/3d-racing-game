@@ -1,30 +1,38 @@
 import * as THREE from "three";
+import type { TrackDef } from "./config";
+import { SECTOR_COUNT } from "./config";
 import { mulberry32 } from "./noise";
 
+/** Fallback half-width; the authoritative value lives on each Track instance. */
 export const TRACK_HALF_WIDTH = 7.2;
 
 export class Track {
+  readonly def: TrackDef;
+  readonly halfWidth: number;
   points: THREE.Vector3[] = [];
   tangents: THREE.Vector3[] = [];
   rights: THREE.Vector3[] = [];
   curvature: Float32Array;
   heights: Float32Array;
+  /** Index of the first sample of each sector. */
+  sectorStarts: number[] = [];
   count: number;
   spacing: number;
   length: number;
   private grid = new Map<number, number[]>();
   private cell = 12;
 
-  constructor(seed: number) {
-    const rand = mulberry32(seed);
-    // Hand-tuned radii produce a circuit with long straights, sweepers and two hairpins.
-    const radii = [152, 164, 150, 118, 96, 110, 152, 170, 162, 134, 104, 128, 158, 174, 164, 152];
+  constructor(def: TrackDef) {
+    this.def = def;
+    this.halfWidth = def.halfWidth;
+    const rand = mulberry32(def.seed);
+    const radii = def.radii;
     const n = radii.length;
     const ctrl: THREE.Vector3[] = [];
     for (let i = 0; i < n; i++) {
       const ang = (i / n) * Math.PI * 2 + (rand() - 0.5) * 0.12;
       const r = radii[i] * (0.97 + rand() * 0.06);
-      ctrl.push(new THREE.Vector3(Math.cos(ang) * r * 1.1, 0, Math.sin(ang) * r * 0.94));
+      ctrl.push(new THREE.Vector3(Math.cos(ang) * r * def.stretch[0], 0, Math.sin(ang) * r * def.stretch[1]));
     }
     const curve = new THREE.CatmullRomCurve3(ctrl, true, "centripetal");
     const M = 1600;
@@ -62,6 +70,10 @@ export class Track {
       this.curvature[i] = sum / (2 * R + 1);
     }
 
+    for (let s = 0; s < SECTOR_COUNT; s++) {
+      this.sectorStarts.push(Math.round((s / SECTOR_COUNT) * M) % M);
+    }
+
     // spatial hash
     for (let i = 0; i < M; i++) {
       const key = this.key(pts[i].x, pts[i].z);
@@ -78,6 +90,14 @@ export class Track {
     const cx = Math.floor(x / this.cell) + 200;
     const cz = Math.floor(z / this.cell) + 200;
     return cx * 1000 + cz;
+  }
+
+  /** Which sector a sample index belongs to. */
+  sectorOf(index: number): number {
+    for (let s = SECTOR_COUNT - 1; s >= 0; s--) {
+      if (index >= this.sectorStarts[s]) return s;
+    }
+    return 0;
   }
 
   /** Nearest sample index within maxDist using the spatial hash. index = -1 if none. */
@@ -104,6 +124,26 @@ export class Track {
       }
     }
     return { index: best, dist: best >= 0 ? Math.sqrt(bestD) : Infinity };
+  }
+
+  /** Refine a candidate index to the true local minimum (cheap, bounded). */
+  refine(x: number, z: number, startIdx: number, window = 24): number {
+    const M = this.count;
+    const origin = ((startIdx % M) + M) % M;
+    let best = origin;
+    let bestD = Infinity;
+    for (let k = -window; k <= window; k++) {
+      const i = (origin + k + M) % M;
+      const p = this.points[i];
+      const dx = p.x - x;
+      const dz = p.z - z;
+      const d = dx * dx + dz * dz;
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    return best;
   }
 
   /** Nearest sample near a previously known index (fast per-frame tracking). */
@@ -153,7 +193,7 @@ export class Track {
 /** Builds the dirt ribbon mesh of the track. */
 export function buildTrackMesh(track: Track, getHeight: (x: number, z: number) => number): THREE.Mesh {
   const M = track.count;
-  const hw = TRACK_HALF_WIDTH;
+  const hw = track.halfWidth;
   const offsets = [-1, -0.9, -0.78, -0.42, 0.42, 0.78, 0.9, 1];
   const edge = new THREE.Color(0xa8784f);
   const mid = new THREE.Color(0x8a5f41);
@@ -200,6 +240,67 @@ export function buildTrackMesh(track: Track, getHeight: (x: number, z: number) =
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.96, metalness: 0 });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
+  mesh.name = "track";
+  return mesh;
+}
+
+/** Optional driving-line overlay — a glowing ribbon through the ideal line. */
+export function buildRacingLine(track: Track, getHeight: (x: number, z: number) => number): THREE.Mesh {
+  const M = track.count;
+  const hw = track.halfWidth;
+  const half = 0.42;
+  const positions = new Float32Array(M * 2 * 3);
+  const colors = new Float32Array(M * 2 * 3);
+  const indices: number[] = [];
+  const tmp = new THREE.Vector3();
+  const fast = new THREE.Color(0x5fe08a);
+  const slow = new THREE.Color(0xe2593f);
+  const c = new THREE.Color();
+  // Smooth the "inside of the corner" offset to approximate a racing line.
+  const lateral = new Float32Array(M);
+  for (let i = 0; i < M; i++) {
+    const k = track.curvature[i];
+    lateral[i] = Math.max(-1, Math.min(1, k * 70)) * (hw - 2.1);
+  }
+  const smoothed = new Float32Array(M);
+  const R = 40;
+  for (let i = 0; i < M; i++) {
+    let sum = 0;
+    for (let k = -R; k <= R; k++) sum += lateral[(i + k + M) % M];
+    smoothed[i] = sum / (2 * R + 1);
+  }
+  for (let i = 0; i < M; i++) {
+    const kAbs = Math.abs(track.curvature[i]);
+    c.copy(fast).lerp(slow, Math.min(1, kAbs * 55));
+    for (let j = 0; j < 2; j++) {
+      track.offsetPoint(i, smoothed[i] + (j === 0 ? -half : half), tmp);
+      const vi = i * 2 + j;
+      positions[vi * 3] = tmp.x;
+      positions[vi * 3 + 1] = getHeight(tmp.x, tmp.z) + 0.16;
+      positions[vi * 3 + 2] = tmp.z;
+      colors[vi * 3] = c.r;
+      colors[vi * 3 + 1] = c.g;
+      colors[vi * 3 + 2] = c.b;
+    }
+  }
+  for (let i = 0; i < M; i++) {
+    const n = (i + 1) % M;
+    indices.push(i * 2, i * 2 + 1, n * 2, i * 2 + 1, n * 2 + 1, n * 2);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  geo.setIndex(indices);
+  const mat = new THREE.MeshBasicMaterial({
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.4,
+    depthWrite: false,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.renderOrder = 2;
+  mesh.visible = false;
+  mesh.name = "racingLine";
   return mesh;
 }
 
@@ -228,11 +329,12 @@ export function buildStartLine(track: Track, getHeight: (x: number, z: number) =
   g.rotation.y = track.yawAt(0);
   const tex = makeCheckerTexture(16, 3);
   const plane = new THREE.Mesh(
-    new THREE.PlaneGeometry(TRACK_HALF_WIDTH * 2, 2.2),
-    new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9 })
+    new THREE.PlaneGeometry(track.halfWidth * 2, 2.2),
+    new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9 }),
   );
   plane.rotation.x = -Math.PI / 2;
   plane.receiveShadow = true;
   g.add(plane);
+  g.name = "startLine";
   return g;
 }
