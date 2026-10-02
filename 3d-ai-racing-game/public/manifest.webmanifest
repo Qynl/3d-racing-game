@@ -8,13 +8,26 @@
   "orientation": "landscape",
   "background_color": "#1d1a17",
   "theme_color": "#1d1a17",
-  "categories": ["games", "entertainment"],
+  "categories": [
+    "games",
+    "entertainment"
+  ],
   "icons": [
     {
       "src": "./icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"
+    }
+  ],
+  "id": "/3d-racing-game/",
+  "screenshots": [
+    {
+      "src": "./og.jpg",
+      "sizes": "1200x630",
+      "type": "image/jpeg",
+      "form_factor": "wide",
+      "label": "Racing at golden hour"
     }
   ]
 }

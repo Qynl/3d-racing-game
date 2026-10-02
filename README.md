@@ -1,5 +1,7 @@
 # Sundown Rally
 
+**▶ Play it: https://qynl.github.io/3d-racing-game/**
+
 A 3D desert rally game that runs entirely in the browser. Procedural terrain, four seeded
 circuits plus an infinite Wildcard generator, three car classes with a credits-and-upgrades
 garage, full race replays with broadcast cameras, per-race objectives, weather that can turn
@@ -9,8 +11,10 @@ mode where last place is eliminated on a timer, a four-round championship, drift
 slipstreaming, launch control, damage, ghost cars and a full sector-timing system — built with React 19, Vite 7, Tailwind 4 and three.js. No game
 engine, no downloaded assets: every mesh, texture and sound is generated at runtime.
 
-The whole game ships as **one HTML file** (`dist/index.html`, ~1.2 MB / ~440 kB gzipped),
-fonts and all. Drop it anywhere, open it offline, it works.
+The whole game ships as **one HTML file** (`dist/index.html`, ~1.26 MB / ~450 kB gzipped),
+fonts and all. Drop it anywhere, open it offline, it works. The hosted build registers a
+service worker and ships a web manifest, so it installs to a home screen and plays with the
+network off.
 
 ```bash
 cd 3d-ai-racing-game
@@ -242,10 +246,25 @@ loading and the WebGL-failure fallback — to catch render-time crashes the type
 
 ## Deployment
 
+The game is a static site: **https://qynl.github.io/3d-racing-game/**
+
 `.github/workflows/ci.yml` runs typecheck, lint, format check, tests and a build on every push
-and pull request. `.github/workflows/deploy.yml` publishes `dist/` to GitHub Pages on pushes to
-`main` — enable Pages with the "GitHub Actions" source in repository settings first. The build
-uses `base: "./"`, so the output also works from a subdirectory, a file:// URL or an itch.io zip.
+and pull request. `.github/workflows/deploy.yml` builds `3d-ai-racing-game/dist` and publishes
+it to GitHub Pages on every push to `main` (or on demand via *Actions → Deploy to GitHub Pages
+→ Run workflow*).
+
+### One-time setup
+
+GitHub Pages has to be switched on by a repository admin — an API token cannot do it:
+
+1. **Settings → Pages → Build and deployment → Source: _GitHub Actions_.**
+2. Merge to `main` (or run the deploy workflow manually). The site appears at
+   `https://<user>.github.io/<repo>/` a minute or so later.
+
+The build uses `base: "./"`, so the same output works from a project subpath, the domain root,
+a `file://` URL, an itch.io zip or any S3 bucket. `public/` also ships `robots.txt`,
+`sitemap.xml`, a social share card (`og.jpg`, referenced from the Open Graph tags) and the
+offline service worker.
 
 ## Credits
 
